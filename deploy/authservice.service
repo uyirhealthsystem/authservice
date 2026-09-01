@@ -1,0 +1,23 @@
+[Unit]
+Description=Uyir authservice
+After=network.target
+# If Postgres runs on the same box, also: After=postgresql.service
+
+[Service]
+Type=simple
+User=authservice
+WorkingDirectory=/opt/authservice/current
+EnvironmentFile=/opt/authservice/shared/authservice.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist/server.js
+Restart=on-failure
+RestartSec=3
+# hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/authservice
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

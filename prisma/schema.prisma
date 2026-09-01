@@ -1,0 +1,123 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// role is decided by which clientId (portal/app) a user registers and logs
+// in through - see src/lib/portals.ts for the clientId -> role mapping. It's
+// a plain string, not a Postgres enum, so adding a new role later is a code
+// change to that one mapping file, never a migration.
+//
+// status starts PENDING for every portal except the ones whose PortalConfig
+// has autoApprove: true (patient apps, super-admin bootstrap). A PENDING
+// account cannot log in until an ADMIN or SUPER_ADMIN approves it - see
+// src/modules/admin. approvedAt / approvedById record who did that.
+model User {
+  id           String     @id @default(uuid())
+  email        String?    @unique
+  role         String
+  status       UserStatus @default(PENDING)
+  approvedAt   DateTime?
+  approvedById String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  lastLoginAt  DateTime?
+
+  identities Identity[]
+  sessions   Session[]
+
+  @@map("users")
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  DISABLED
+}
+
+// One row per login method a user has enrolled - lets one account hold both
+// a PASSWORD and a GOOGLE identity.
+model Identity {
+  id             String       @id @default(uuid())
+  userId         String
+  provider       AuthProvider
+  providerUserId String // email for PASSWORD, Google "sub" for GOOGLE
+  credentialHash String? // bcrypt hash, PASSWORD only
+  verifiedAt     DateTime?
+  createdAt      DateTime     @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUserId])
+  @@index([userId])
+  @@map("identities")
+}
+
+enum AuthProvider {
+  PASSWORD
+  GOOGLE
+}
+
+// RSA signing keys for access tokens. Exactly one ACTIVE at a time
+// (enforced by a hand-written partial unique index - see migration.sql).
+// JWKS publishes ACTIVE + RETIRED so a token signed just before a rotation
+// still verifies afterward.
+model SigningKey {
+  id         String           @id @default(uuid())
+  kid        String           @unique
+  algorithm  String           @default("RS256")
+  publicKey  String // PEM
+  privateKey String // PEM - plaintext in Postgres; move to a KMS before real production use
+  status     SigningKeyStatus @default(ACTIVE)
+  createdAt  DateTime         @default(now())
+  retiredAt  DateTime?
+
+  @@map("signing_keys")
+}
+
+enum SigningKeyStatus {
+  ACTIVE
+  RETIRED
+}
+
+model Session {
+  id        String    @id @default(uuid())
+  userId    String
+  portalId  String // clientId - which app this session was started from
+  audience  String // JWT `aud` claim to re-sign on refresh
+  userAgent String?
+  ip        String?
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokens RefreshToken[]
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model RefreshToken {
+  id        String             @id @default(uuid())
+  sessionId String
+  tokenHash String             @unique // SHA-256 of the opaque token; raw value never stored
+  status    RefreshTokenStatus @default(ACTIVE)
+  expiresAt DateTime
+  createdAt DateTime           @default(now())
+  rotatedAt DateTime?
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("refresh_tokens")
+}
+
+enum RefreshTokenStatus {
+  ACTIVE
+  ROTATED
+  REVOKED
+}

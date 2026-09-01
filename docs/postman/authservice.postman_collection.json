@@ -1,0 +1,767 @@
+{
+  "info": {
+    "name": "authservice",
+    "description": "Identity service for the Uyir platform. Role is decided entirely by which portal/app (clientId) an account registers and logs in through — see src/lib/portals.ts and docs/ARCHITECTURE.md §3. Non-patient accounts register as PENDING and must be approved by an ADMIN/SUPER_ADMIN before they can log in (§3a) — see the 'Admin — Account Approval' folder. Run 'Health & JWKS' first, then 'Admin — Account Approval' to bootstrap a super admin, then 'Email Auth (generic)'. 'Portal Reference' shows the clientId -> role mapping as runnable examples, and 'Demo: Design Properties' proves the interesting behaviors (approval gate, web+app same account, cross-portal rejection, refresh rotation, reuse detection) end to end.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000" },
+    { "key": "email", "value": "meera@example.com" },
+    { "key": "password", "value": "Password123!" },
+    { "key": "clientId", "value": "service-provider-app" },
+    { "key": "providerRole", "value": "DOCTOR" },
+    { "key": "accessToken", "value": "" },
+    { "key": "refreshToken", "value": "" },
+    { "key": "demoEmail", "value": "provider.demo@example.com" },
+    { "key": "demoPatientEmail", "value": "patient.demo@example.com" },
+    { "key": "demoPassword", "value": "Password123!" },
+    { "key": "refreshToken_gen1", "value": "" },
+    { "key": "refreshToken_gen2", "value": "" },
+    { "key": "googleRedirectUri", "value": "http://localhost:5173/oauth/callback" },
+    { "key": "superAdminEmail", "value": "superadmin@example.com" },
+    { "key": "superAdminPassword", "value": "Password123!" },
+    { "key": "superAdminToken", "value": "" },
+    { "key": "pendingUserId", "value": "" },
+    { "key": "demoProviderUserId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Health & JWKS",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] },
+            "description": "No auth. Does a real SELECT 1 against Postgres. 200 = ok, 503 = DB unreachable."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status is ok', () => pm.expect(pm.response.json().status).to.eql('ok'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "JWKS (public keys)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/.well-known/jwks.json",
+              "host": ["{{baseUrl}}"],
+              "path": [".well-known", "jwks.json"]
+            },
+            "description": "No auth. This is what every OTHER microservice fetches (once, cached by kid) to verify authservice's access tokens locally, without ever calling back here. See docs/API.md 'For other microservices'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('publishes at least one RSA key', () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.keys).to.be.an('array').that.is.not.empty;",
+                  "  pm.expect(body.keys[0]).to.have.property('kty', 'RSA');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Email Auth (generic)",
+      "description": "The everyday flow using the {{email}}/{{password}}/{{clientId}} collection variables. Change {{clientId}} to any portal in Portal Reference to try a different role.",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"clientId\": \"{{clientId}}\",\n  \"role\": \"{{providerRole}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "description": "The default {{clientId}} is service-provider-app, which REQUIRES a `role` (DOCTOR/HOSPITAL/LS/AMBULANCE_DRIVER). Single-role portals (patient-*, admin-portal, superadmin-portal) ignore the `role` field. service-provider-app and admin-portal accounts come back status 'PENDING' - approve them via the Admin folder. Returns 409 EMAIL_TAKEN on re-run."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 201 or already-registered 409', () => {",
+                  "  pm.expect([201, 409]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  pm.test('role matches the clientId used', () => {",
+                  "    pm.expect(body).to.have.property('role');",
+                  "  });",
+                  "  pm.test('carries an approval status', () => {",
+                  "    pm.expect(body).to.have.property('status');",
+                  "    pm.expect(['PENDING', 'ACTIVE']).to.include(body.status);",
+                  "  });",
+                  "  if (body.status === 'PENDING') {",
+                  "    pm.collectionVariables.set('pendingUserId', body.id);",
+                  "    console.log('Account is PENDING - approve it via Admin - Account Approval, id =', body.id);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"clientId\": \"{{clientId}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/auth/email/login", "host": ["{{baseUrl}}"], "path": ["auth", "email", "login"] },
+            "description": "Verifies the password, checks the account is ACTIVE (a fresh service-provider/admin account is PENDING -> 403 PENDING_APPROVAL) and that its role is one this portal serves. The default {{clientId}} is service-provider-app, a NATIVE client - so the response body carries `refreshToken` (captured below for Refresh/Logout) and there is no cookie. A web clientId (patient-portal etc.) would set the cookie instead."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 403 && pm.response.json().error.code === 'PENDING_APPROVAL') {",
+                  "  pm.test.skip('account not approved yet - approve it via the Admin folder, then retry');",
+                  "  return;",
+                  "}",
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code !== 200) return;",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('accessToken', body.accessToken);",
+                  "if (body.refreshToken) pm.collectionVariables.set('refreshToken', body.refreshToken);",
+                  "const payload = JSON.parse(atob(body.accessToken.split('.')[1]));",
+                  "console.log('Decoded token payload:', payload);",
+                  "pm.test('token carries a role and matches clientId as aud', () => {",
+                  "  pm.expect(payload).to.have.property('role');",
+                  "  pm.expect(payload.aud).to.eql(pm.collectionVariables.get('clientId'));",
+                  "});",
+                  "pm.test('native client returned refreshToken in the body', () => pm.expect(body).to.have.property('refreshToken'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/token/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "token", "refresh"] },
+            "description": "Native client: sends the refresh token in the body (captured from Login) and gets a new one back in the body. Web clients omit the body and rely on the cookie Postman holds. Rotating invalidates the previous token instantly."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code !== 200) return;",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('accessToken', body.accessToken);",
+                  "if (body.refreshToken) pm.collectionVariables.set('refreshToken', body.refreshToken);",
+                  "pm.test('body carried a rotated refreshToken', () => pm.expect(body).to.have.property('refreshToken'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/logout", "host": ["{{baseUrl}}"], "path": ["auth", "logout"] },
+            "description": "Revokes the session. Native client sends the refresh token in the body; web relies on the cookie. 204 either way, even with no token."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('status is 204', () => pm.response.to.have.status(204));"] }
+            }
+          ]
+        },
+        {
+          "name": "Logout ALL devices",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
+            "url": { "raw": "{{baseUrl}}/auth/logout-all", "host": ["{{baseUrl}}"], "path": ["auth", "logout-all"] },
+            "description": "Revokes EVERY session on the account, on every device/portal. Takes the access token (not a refresh token) since it acts on the whole account. Run 'Login' first to populate {{accessToken}}. After this, every device's next /auth/token/refresh fails."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                "if (pm.response.code === 200) pm.test('reports how many sessions were revoked', () => pm.expect(pm.response.json()).to.have.property('revokedSessions'));"
+              ] }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Admin — Account Approval",
+      "description": "Non-patient accounts register as PENDING and can't log in until approved. Run these in order: (1) bootstrap a SUPER_ADMIN (self-activates), (2) log in as that super admin to get a token, (3) list who's pending, (4) approve one. A SUPER_ADMIN can approve anyone; an ADMIN can approve service-provider accounts only, never another ADMIN/SUPER_ADMIN.",
+      "item": [
+        {
+          "name": "1. Bootstrap Super Admin (register)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{superAdminEmail}}\",\n  \"password\": \"{{superAdminPassword}}\",\n  \"clientId\": \"superadmin-portal\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "description": "superadmin-portal has autoApprove: true, so this account comes back status ACTIVE and can log in immediately. 409 on re-run is fine."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 201 or already-registered 409', () => pm.expect([201, 409]).to.include(pm.response.code));",
+                "if (pm.response.code === 201) pm.test('super admin self-activates', () => pm.expect(pm.response.json().status).to.eql('ACTIVE'));"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "2. Login as Super Admin (capture token)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{superAdminEmail}}\",\n  \"password\": \"{{superAdminPassword}}\",\n  \"clientId\": \"superadmin-portal\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/login", "host": ["{{baseUrl}}"], "path": ["auth", "email", "login"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                "if (pm.response.code !== 200) return;",
+                "pm.collectionVariables.set('superAdminToken', pm.response.json().accessToken);"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "3. List Pending Users",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{superAdminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/admin/users/pending", "host": ["{{baseUrl}}"], "path": ["admin", "users", "pending"] },
+            "description": "A SUPER_ADMIN sees every PENDING account (including PENDING admins); an ADMIN sees only service-provider accounts."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                "if (pm.response.code !== 200) return;",
+                "const users = pm.response.json().users;",
+                "pm.test('returns a users array', () => pm.expect(users).to.be.an('array'));",
+                "if (users.length) { pm.collectionVariables.set('pendingUserId', users[0].id); console.log('First pending user id captured:', users[0].id); }"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "4. Approve a User",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{superAdminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/admin/users/{{pendingUserId}}/approve", "host": ["{{baseUrl}}"], "path": ["admin", "users", "{{pendingUserId}}", "approve"] },
+            "description": "Flips {{pendingUserId}} (captured in step 3, or by the generic Register call) from PENDING to ACTIVE. That account can now log in. 400 NOT_PENDING if it was already actioned."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 200 or already-actioned 400', () => pm.expect([200, 400]).to.include(pm.response.code));",
+                "if (pm.response.code === 200) pm.test('user is now ACTIVE', () => pm.expect(pm.response.json().user.status).to.eql('ACTIVE'));"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "5. Reject a User (alternative to approve)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{superAdminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/admin/users/{{pendingUserId}}/reject", "host": ["{{baseUrl}}"], "path": ["admin", "users", "{{pendingUserId}}", "reject"] },
+            "description": "Flips a PENDING account to DISABLED - its login attempts then get 403 ACCOUNT_DISABLED. Only run this instead of step 4, not after it (a non-PENDING account gives 400 NOT_PENDING)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 200 or already-actioned 400', () => pm.expect([200, 400]).to.include(pm.response.code));"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "No token → 401",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/admin/users/pending", "host": ["{{baseUrl}}"], "path": ["admin", "users", "pending"] },
+            "description": "The admin routes are the only ones this service guards itself, via requireAuth('ADMIN','SUPER_ADMIN')."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 401', () => pm.response.to.have.status(401));"
+              ] }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Portal Reference (register examples)",
+      "description": "One Register call per portal / role, as runnable examples. Four portals total: patient-app, patient-portal, service-provider-app (multi-role - pass `role`), admin-portal, superadmin-portal. See docs/API.md for the same in prose.",
+      "item": [
+        {
+          "name": "Patient App -> PATIENT",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"patient.mobile@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"patient-app\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "description": "Single-role portal - no `role` field. Self-activates (status ACTIVE). Native client, so Google sign-in is POST /auth/google/native (see the Google OAuth folder)."
+          }
+        },
+        {
+          "name": "Patient Portal (web) -> PATIENT",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"patient.web@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"patient-portal\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "description": "Same role as patient-app - one account can log into both (see 'Demo: Design Properties' step 2)."
+          }
+        },
+        {
+          "name": "Service Provider App -> DOCTOR",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"doctor@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"DOCTOR\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "description": "One app, role chosen here. Lands PENDING - approve via the Admin folder."
+          }
+        },
+        {
+          "name": "Service Provider App -> HOSPITAL",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"hospital@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"HOSPITAL\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] }
+          }
+        },
+        {
+          "name": "Service Provider App -> LS",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"ls@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"LS\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] }
+          }
+        },
+        {
+          "name": "Service Provider App -> AMBULANCE_DRIVER",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"driver@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"AMBULANCE_DRIVER\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] }
+          }
+        },
+        {
+          "name": "Service Provider App - no role -> 400 ROLE_REQUIRED",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"noRole@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"service-provider-app\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "description": "Multi-role portal with no `role` in the body."
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": [
+              "pm.test('400 ROLE_REQUIRED', () => { pm.response.to.have.status(400); pm.expect(pm.response.json().error.code).to.eql('ROLE_REQUIRED'); });"
+            ] } }
+          ]
+        },
+        {
+          "name": "Service Provider App - bad role -> 400 ROLE_NOT_ALLOWED",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"badRole@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"PATIENT\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "description": "`role` is not one service-provider-app serves."
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": [
+              "pm.test('400 ROLE_NOT_ALLOWED', () => { pm.response.to.have.status(400); pm.expect(pm.response.json().error.code).to.eql('ROLE_NOT_ALLOWED'); });"
+            ] } }
+          ]
+        },
+        {
+          "name": "Admin Portal (web only) -> ADMIN",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"admin-portal\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "description": "Single-role, no `role` field. Registers PENDING - only a SUPER_ADMIN can approve a PENDING ADMIN. See docs/ARCHITECTURE.md §3a."
+          }
+        },
+        {
+          "name": "Super Admin Portal (web only) -> SUPER_ADMIN",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"superadmin@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"superadmin-portal\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "description": "The one portal that self-activates (status ACTIVE) - bootstrap account, nobody above it. Anyone who knows this clientId can still mint a SUPER_ADMIN: see docs/ARCHITECTURE.md §7."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Demo: Design Properties",
+      "description": "Run these in order. Matches docs/STORY_GUIDE.md: pick-role-at-registration + approval gate (1 → 1d), login returns the role + a body refresh token for this native client (2), cross-portal rejection (3), refresh rotation + reuse detection over body tokens (4 → 6), patient app+web share one account (7 → 8).",
+      "item": [
+        {
+          "name": "1. Register a DOCTOR via service-provider-app (lands PENDING)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{demoEmail}}\",\n  \"password\": \"{{demoPassword}}\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"DOCTOR\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "description": "One app for every professional - the role is picked here. Not an autoApprove portal, so the account comes back status PENDING and cannot log in yet. Steps 1a-1d approve it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 201 or already-registered 409', () => pm.expect([201,409]).to.include(pm.response.code));",
+                "if (pm.response.code === 201) {",
+                "  const body = pm.response.json();",
+                "  pm.test('role is DOCTOR and status PENDING', () => { pm.expect(body.role).to.eql('DOCTOR'); pm.expect(body.status).to.eql('PENDING'); });",
+                "  pm.collectionVariables.set('demoProviderUserId', body.id);",
+                "}"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "1a. Bootstrap Super Admin (register)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{superAdminEmail}}\",\n  \"password\": \"{{superAdminPassword}}\",\n  \"clientId\": \"superadmin-portal\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "description": "Self-activates (autoApprove). 409 on re-run is fine."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('status is 201 or 409', () => pm.expect([201,409]).to.include(pm.response.code));"] }
+            }
+          ]
+        },
+        {
+          "name": "1b. Login as Super Admin (capture token)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{superAdminEmail}}\",\n  \"password\": \"{{superAdminPassword}}\",\n  \"clientId\": \"superadmin-portal\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/login", "host": ["{{baseUrl}}"], "path": ["auth", "email", "login"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                "if (pm.response.code === 200) pm.collectionVariables.set('superAdminToken', pm.response.json().accessToken);"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "1c. Super Admin sees the doctor in the pending queue",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{superAdminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/admin/users/pending", "host": ["{{baseUrl}}"], "path": ["admin", "users", "pending"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                "if (pm.response.code !== 200) return;",
+                "const ids = pm.response.json().users.map(u => u.id);",
+                "pm.test('the demo doctor account is waiting', () => pm.expect(ids).to.include(pm.collectionVariables.get('demoProviderUserId')));"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "1d. Approve the doctor account",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{superAdminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/admin/users/{{demoProviderUserId}}/approve", "host": ["{{baseUrl}}"], "path": ["admin", "users", "{{demoProviderUserId}}", "approve"] },
+            "description": "PENDING -> ACTIVE. Now step 2's login can succeed. 400 NOT_PENDING on re-run is fine."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 200 or already-approved 400', () => pm.expect([200,400]).to.include(pm.response.code));"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "2. Doctor logs in - token carries the role",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{demoEmail}}\",\n  \"password\": \"{{demoPassword}}\",\n  \"clientId\": \"service-provider-app\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/login", "host": ["{{baseUrl}}"], "path": ["auth", "email", "login"] },
+            "description": "No `role` on login - the account already has one, returned in the token AND as `role` in the body. service-provider-app is a native client, so the refresh token comes back in the BODY (no cookie) - captured for steps 4-6."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code !== 200) return;",
+                  "const body = pm.response.json();",
+                  "const payload = JSON.parse(atob(body.accessToken.split('.')[1]));",
+                  "pm.test('role is DOCTOR, aud is service-provider-app', () => {",
+                  "  pm.expect(payload.role).to.eql('DOCTOR');",
+                  "  pm.expect(payload.aud).to.eql('service-provider-app');",
+                  "});",
+                  "pm.test('native login returned refreshToken in the body, no cookie', () => {",
+                  "  pm.expect(body).to.have.property('refreshToken');",
+                  "  pm.expect(pm.cookies.has('refresh_token')).to.be.false;",
+                  "});",
+                  "pm.collectionVariables.set('refreshToken_gen1', body.refreshToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Cross-Portal Rejection (doctor creds at the patient app)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{demoEmail}}\",\n  \"password\": \"{{demoPassword}}\",\n  \"clientId\": \"patient-app\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/login", "host": ["{{baseUrl}}"], "path": ["auth", "email", "login"] },
+            "description": "Correct password, real account - still rejected, because this account's role (DOCTOR) is not one patient-app serves."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 403 - role not valid on this portal', () => pm.response.to.have.status(403));",
+                  "pm.test('error code is FORBIDDEN', () => pm.expect(pm.response.json().error.code).to.eql('FORBIDDEN'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Refresh Token Rotation (native - body token)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken_gen1}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/token/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "token", "refresh"] },
+            "description": "Sends gen1 in the body, gets gen2 back in the body. gen1 becomes invalid the instant this succeeds."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "if (pm.response.code !== 200) return;",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('refreshToken_gen2', body.refreshToken);",
+                  "pm.test('rotation issued a NEW refresh token value', () => {",
+                  "  pm.expect(body.refreshToken).to.be.a('string').and.not.eql(pm.collectionVariables.get('refreshToken_gen1'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Reuse Detection (replay the OLD gen1 token)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken_gen1}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/token/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "token", "refresh"] },
+            "description": "Replays gen1, which step 4 already rotated. This simulates a stolen/replayed refresh token - expect the whole session, including the legit gen2, to get revoked."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 403 - reuse detected', () => pm.response.to.have.status(403));",
+                  "pm.test('session revoked message', () => pm.expect(pm.response.json().error.message).to.include('reuse detected'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Confirm cascading revocation (gen2 token now ALSO dead)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken_gen2}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/token/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "token", "refresh"] },
+            "description": "Step 5 didn't just reject the stolen token - it revoked the ENTIRE session. The legitimate, never-compromised gen2 is now dead too, forcing a fresh login."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('status is 403 - whole session was revoked, not just the stolen token', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. Patient registers through the app (self-activates)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{demoPatientEmail}}\",\n  \"password\": \"{{demoPassword}}\",\n  \"clientId\": \"patient-app\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "description": "Sets up step 8. Patient portals self-activate - status ACTIVE, no approval. 409 on re-run is fine."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 201 or 409', () => pm.expect([201,409]).to.include(pm.response.code));",
+                "if (pm.response.code === 201) pm.test('ACTIVE immediately', () => pm.expect(pm.response.json().status).to.eql('ACTIVE'));"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "8. Same patient logs in via patient-portal (app + web share one account)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{demoPatientEmail}}\",\n  \"password\": \"{{demoPassword}}\",\n  \"clientId\": \"patient-portal\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/email/login", "host": ["{{baseUrl}}"], "path": ["auth", "email", "login"] },
+            "description": "Registered through patient-app, logs in fine here - patient-app and patient-portal share a `roles` list and the login check only compares role to role. Independent session, aud is patient-portal."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                "if (pm.response.code !== 200) return;",
+                "const payload = JSON.parse(atob(pm.response.json().accessToken.split('.')[1]));",
+                "pm.test('role PATIENT, aud patient-portal', () => { pm.expect(payload.role).to.eql('PATIENT'); pm.expect(payload.aud).to.eql('patient-portal'); });"
+              ] }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Google OAuth",
+      "description": "Two separate flows, one per client type. WEB (patient-portal): the browser redirect below - open in a real browser, not Send. NATIVE (patient-app, service-provider-app): POST an ID token to /auth/google/native. The server rejects the wrong pairing (USE_NATIVE_GOOGLE / NOT_A_NATIVE_CLIENT). 503s until Google env is configured.",
+      "item": [
+        {
+          "name": "WEB: Start Google Login (open in browser)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/auth/google/start?clientId=patient-portal&redirectUri={{googleRedirectUri}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "google", "start"],
+              "query": [
+                { "key": "clientId", "value": "patient-portal" },
+                { "key": "redirectUri", "value": "{{googleRedirectUri}}" }
+              ]
+            },
+            "description": "Copy this URL into a real browser tab. patient-portal is the web patient client; redirectUri is that web app's callback and must be on GOOGLE_ALLOWED_PORTAL_REDIRECT_URIS. After consent, /auth/google/callback redirects to redirectUri with ?accessToken=... and sets the refresh cookie. Only web portals with Google in allowedProviders work here (in practice just patient-portal - the admin portals are password-only)."
+          }
+        },
+        {
+          "name": "WEB: Start with a NATIVE clientId -> 400 USE_NATIVE_GOOGLE",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/auth/google/start?clientId=service-provider-app&redirectUri={{googleRedirectUri}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "google", "start"],
+              "query": [
+                { "key": "clientId", "value": "service-provider-app" },
+                { "key": "redirectUri", "value": "{{googleRedirectUri}}" }
+              ]
+            },
+            "description": "service-provider-app (and patient-app) are native clients - they have no web page to redirect back to, so the redirect flow refuses them. Use 'NATIVE: Google Sign-In' below instead."
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": [
+              "pm.test('400 USE_NATIVE_GOOGLE (or 503 if Google unconfigured)', () => {",
+              "  if (pm.response.code === 503) return;",
+              "  pm.response.to.have.status(400);",
+              "  pm.expect(pm.response.json().error.code).to.eql('USE_NATIVE_GOOGLE');",
+              "});"
+            ] } }
+          ]
+        },
+        {
+          "name": "NATIVE: Google Sign-In (POST idToken)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"idToken\": \"<Google ID token from the native Sign-In SDK>\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"DOCTOR\"\n}" },
+            "url": { "raw": "{{baseUrl}}/auth/google/native", "host": ["{{baseUrl}}"], "path": ["auth", "google", "native"] },
+            "description": "The MOBILE path - no browser, no redirectUri. The app runs Google Sign-In with its platform SDK, gets an ID token, and posts it here. Server verifies it (aud must be GOOGLE_CLIENT_ID or one of GOOGLE_NATIVE_CLIENT_IDS), then find-or-create + role + status checks like every login. `role` required for service-provider-app, ignored for patient-app. Native portals only - a web clientId gives 400 NOT_A_NATIVE_CLIENT. Returns { accessToken, role, refreshToken } in the body. Needs a real idToken to actually succeed - here as a shape reference."
+          }
+        }
+      ]
+    }
+  ]
+}
