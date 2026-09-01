@@ -14,7 +14,7 @@ import { Errors } from "./errors";
 // Login always re-checks the account's stored role is one this portal
 // serves (`roles.includes(user.role)`), so a DOCTOR account can't log in
 // through patient-app and a PATIENT can't log in through service-provider-app.
-export const SERVICE_PROVIDER_ROLES = ["DOCTOR", "HOSPITAL", "LS", "AMBULANCE_DRIVER"] as const;
+export const SERVICE_PROVIDER_ROLES = ["DOCTOR", "HOSPITAL", "LS", "AMBULANCE_DRIVER","PRO"] as const;
 export type ServiceProviderRole = (typeof SERVICE_PROVIDER_ROLES)[number];
 
 export interface PortalConfig {
