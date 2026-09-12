@@ -14,7 +14,7 @@ import { Errors } from "./errors";
 // Login always re-checks the account's stored role is one this portal
 // serves (`roles.includes(user.role)`), so a DOCTOR account can't log in
 // through patient-app and a PATIENT can't log in through service-provider-app.
-export const SERVICE_PROVIDER_ROLES = ["DOCTOR", "HOSPITAL", "LS", "AMBULANCE_DRIVER","PRO"] as const;
+export const SERVICE_PROVIDER_ROLES = ["DOCTOR", "HOSPITAL", "LS", "AMBULANCE_DRIVER","PRO","LSC","ECG","HP"] as const;
 export type ServiceProviderRole = (typeof SERVICE_PROVIDER_ROLES)[number];
 
 export interface PortalConfig {
@@ -66,7 +66,7 @@ export const PORTALS: Record<string, PortalConfig> = {
   //      (one of SERVICE_PROVIDER_ROLES) and then fixed on the account.
   //      Every such account is PENDING until an admin approves it.
   "service-provider-app": {
-    clientId: "service-provider-app",
+    clientId: "w",
     name: "Service Provider App",
     roles: [...SERVICE_PROVIDER_ROLES],
     // Google is allowed, but because this portal is multi-role the OAuth
