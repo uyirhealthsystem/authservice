@@ -47,10 +47,10 @@ superadmin-portal             -> [SUPER_ADMIN]                            (impli
 ```
 
 - **Single-role portals** — the role is fixed by the `clientId`.
-  `POST /auth/email/register` assigns it; there is nothing to choose.
+  `POST /api/v1/auth/email/register` assigns it; there is nothing to choose.
 - **`service-provider-app`** — one app for every professional role. The
-  caller passes `role` (one of the four) in the `/auth/email/register` body,
-  or in the `/auth/google/native` body; it is validated against the portal's
+  caller passes `role` (one of the four) in the `/api/v1/auth/email/register` body,
+  or in the `/api/v1/auth/google/native` body; it is validated against the portal's
   `roles` list (`resolveRegistrationRole`) and stored on `User.role`, once,
   permanently. This is what "one Service Provider app, patient has its own"
   means: professionals don't get a portal each any more, they get a role
@@ -59,7 +59,7 @@ superadmin-portal             -> [SUPER_ADMIN]                            (impli
 The role is a plain string on `User.role` (not a Postgres enum) — adding a
 role is one entry in a `roles` array, never a migration.
 
-`POST /auth/email/login` (and the Google callback) re-checks the account's
+`POST /api/v1/auth/email/login` (and the Google callback) re-checks the account's
 stored role is one the portal serves (`portalServesRole`). A `PATIENT`
 presenting perfectly correct credentials at `service-provider-app` still
 gets `403`, and a `DOCTOR` at `patient-app` likewise — nothing about *what
@@ -96,10 +96,10 @@ Each `PortalConfig` in `portals.ts` carries an `autoApprove` flag:
 only place this service authorizes its *own* endpoints rather than just
 minting tokens for others):
 
-- `GET  /admin/users/pending`
-- `POST /admin/users/:id/approve` → `status = ACTIVE`, stamps `approvedAt` /
+- `GET  /api/v1/auth/users?status=PENDING`
+- `POST /api/v1/auth/users/:id/approve` → `status = ACTIVE`, stamps `approvedAt` /
   `approvedById`
-- `POST /admin/users/:id/reject`  → `status = DISABLED`
+- `POST /api/v1/auth/users/:id/reject`  → `status = DISABLED`
 
 Who may action whom (`canApprove` in `admin.service.ts`): a `SUPER_ADMIN`
 can action anyone; an `ADMIN` can action service-provider accounts only,
@@ -133,15 +133,15 @@ and out of the browser/app differs, and that choice is one boolean on the
 portal: `PortalConfig.nativeApp`.
 
 - **Web portals** (`nativeApp: false`) — the refresh token is set as an
-  httpOnly `Path=/auth` cookie. The browser can't read it from JS (XSS
-  can't steal it) and sends it automatically on `/auth/token/refresh` and
-  `/auth/logout`.
+  httpOnly `Path=/api/v1/auth` cookie. The browser can't read it from JS (XSS
+  can't steal it) and sends it automatically on `/api/v1/auth/token/refresh` and
+  `/api/v1/auth/logout`.
 - **Native app clients** (`nativeApp: true` — `patient-app`,
   `service-provider-app`) — there is no reliable cookie jar in a React
   Native / Flutter / native app, so login returns the refresh token as a
   string in the JSON body; the app stores it in the OS keychain/keystore
-  and passes it back in the body of `/auth/token/refresh` and
-  `/auth/logout`. The response mirrors the request (body in → body out),
+  and passes it back in the body of `/api/v1/auth/token/refresh` and
+  `/api/v1/auth/logout`. The response mirrors the request (body in → body out),
   so the two routes serve both client types without a mode flag.
 
 `src/modules/auth-shared/refreshTokenDelivery.ts` is the whole mechanism:
@@ -149,10 +149,10 @@ portal: `PortalConfig.nativeApp`.
 `readPresentedRefreshToken()` (body wins over cookie, on the way in).
 
 Google sign-in splits the same way, and the split is enforced both
-directions: `/auth/google/start` rejects a native `clientId`
-(`USE_NATIVE_GOOGLE`), and `/auth/google/native` rejects a web one
+directions: `/api/v1/auth/google/start` rejects a native `clientId`
+(`USE_NATIVE_GOOGLE`), and `/api/v1/auth/google/native` rejects a web one
 (`NOT_A_NATIVE_CLIENT`). Web does the redirect → `/callback`; native posts a
-Google ID token to `/auth/google/native` and never opens a browser.
+Google ID token to `/api/v1/auth/google/native` and never opens a browser.
 
 ## 5. Identity model
 
@@ -160,27 +160,44 @@ A `User` has an id, an optional email, a `role`, a `status` (`PENDING` /
 `ACTIVE` / `DISABLED` — see §3a), and `approvedAt` / `approvedById`. Login methods
 live in a separate `Identity` table (`provider` = `PASSWORD` | `GOOGLE`),
 so one person can hold both a password and a Google login pointing at the
-same account. Google account-linking only happens when Google's
-`email_verified` claim is true, to prevent someone claiming an unverified
-email at Google and taking over an existing account here.
+same account. Linking works in both directions:
+
+- **password → Google:** signing in with Google on an email that already has
+  a password account attaches a `GOOGLE` identity to it — only when Google's
+  `email_verified` claim is true, to prevent someone claiming an unverified
+  email at Google and taking over an existing account here.
+- **Google → password:** a Google-first user runs the forgot/reset flow
+  (`POST /api/v1/auth/password/forgot` → emailed 6-digit code → `POST /api/v1/auth/password/reset`).
+  Redeeming the code creates the `PASSWORD` identity (or replaces the
+  hash for a genuine "forgot"), then revokes every existing session.
+  Re-registering the email is refused with `409 EMAIL_TAKEN`.
+
+Reset codes live in `password_reset_tokens` — 10-min TTL, single-use, only
+the SHA-256 hash stored (same pattern as `RefreshToken`). Lookups are scoped
+by `userId` (resolved from the email in the request), since a 6-digit code
+isn't globally unique. Redeeming one also invalidates the user's other
+outstanding codes.
 
 ## 6. Module layout
 
 ```
 src/
   lib/            env, logger, prisma, jwt (sign/verify), keys (JWKS/signing),
-                  password, refreshToken, refreshCookie, pkce, googleOAuth,
-                  portals (clientId -> roles + nativeApp), errors
-  middleware/     errorHandler, rateLimit, authGuard (requireAuth for /admin)
+                  password, refreshToken, otp, refreshCookie, pkce,
+                  googleOAuth, portals (clientId -> roles + nativeApp),
+                  kafka (best-effort producer), events (domain events), errors
+  middleware/     errorHandler, rateLimit, authGuard (requireAuth for /api/v1/auth/users)
   modules/
     health/       GET /health
     jwks/         GET /.well-known/jwks.json
-    auth-email/   register, login, refresh, logout, logout-all (all shared)
-    auth-google/  redirect flow (web) + POST /auth/google/native (native)
+    auth-email/   register, login, refresh, logout, logout-all
+                  (refresh/logout/logout-all shared with Google + auth-password)
+    auth-password/ POST /api/v1/auth/password/forgot + /api/v1/auth/password/reset
+    auth-google/  redirect flow (web) + POST /api/v1/auth/google/native (native)
     auth-shared/  session.service.ts - startSession / rotateRefreshToken /
                   revokeSessionByRefreshToken;
                   refreshTokenDelivery.ts - cookie vs. JSON-body transport
-    admin/        GET /admin/users/pending, POST /admin/users/:id/approve|reject
+    admin/        GET /api/v1/auth/users?status=PENDING, POST /api/v1/auth/users/:id/approve|reject
 ```
 
 Nothing outside `lib/prisma.ts` imports `@prisma/client` directly except
@@ -188,7 +205,7 @@ Nothing outside `lib/prisma.ts` imports `@prisma/client` directly except
 
 ## 7. Known gaps / deliberate simplifications
 
-- Self-registration goes through the same public `/auth/email/register`
+- Self-registration goes through the same public `/api/v1/auth/email/register`
   endpoint for everyone. `service-provider-app` and `admin-portal` accounts
   land `PENDING` and need an `ADMIN` / `SUPER_ADMIN` approval before they can
   log in (§3a), which closes most of the gap — but `superadmin-portal` still
@@ -199,7 +216,7 @@ Nothing outside `lib/prisma.ts` imports `@prisma/client` directly except
   of the machinery.
 - A service provider **self-declares** their role (`DOCTOR` / `HOSPITAL` /
   `LS` / `AMBULANCE_DRIVER`) when they sign up — `role` in the
-  `/auth/email/register` body, or in the `/auth/google/native` body.
+  `/api/v1/auth/email/register` body, or in the `/api/v1/auth/google/native` body.
   Nothing verifies the claim at that point — the check is the human approval
   step: an admin sees the requested role in the pending queue and approves
   or rejects. An admin cannot currently *change* the role while approving
@@ -213,12 +230,12 @@ Nothing outside `lib/prisma.ts` imports `@prisma/client` directly except
 - Google's `id_token` result is returned to the portal via a redirect query
   parameter (and errors as `?error=<CODE>`). Works, but a hardened version
   would prefer `postMessage` or a one-time exchange code. (The native flow,
-  `/auth/google/native`, sidesteps this entirely — tokens come back in a
+  `/api/v1/auth/google/native`, sidesteps this entirely — tokens come back in a
   normal JSON response.)
 - Native clients hold the refresh token as a plain string in the OS secure
   store. That's the standard trade-off for apps with no httpOnly cookie —
   the reuse-detection in §4 is what limits the damage of a stolen one. No
-  device-binding of refresh tokens yet. `POST /auth/logout-all`
+  device-binding of refresh tokens yet. `POST /api/v1/auth/logout-all`
   (`revokeAllSessionsForUser`) does exist for the "I lost my phone" case —
   it revokes every session on the account — but access tokens already issued
   still work until they expire (≤ `accessTokenTtlMin`), since they're
@@ -228,3 +245,32 @@ Nothing outside `lib/prisma.ts` imports `@prisma/client` directly except
   Google. That's the documented Google "verify on your backend" contract;
   keep `GOOGLE_NATIVE_CLIENT_IDS` to exactly your own app client IDs.
 - Rate limiting (`express-rate-limit`) is in-memory/single-instance only.
+- Password-reset email delivery depends on Kafka **and** `notification-service`
+  **and** SMTP all being up. Each degrades independently (§8); the deliberate
+  gap is that a reset event whose send keeps failing relies on Kafka
+  redelivery alone — there is no dead-letter topic.
+
+## 8. Events (Kafka)
+
+authservice is a **producer only**. It publishes domain events to the
+`auth.events` topic and never consumes anything.
+
+- `src/lib/kafka.ts` — a single best-effort producer. If `KAFKA_BROKERS` is
+  unset it is a **no-op** (one warning logged); the service boots and serves
+  every route regardless. Send failures are caught and logged, never thrown —
+  a Kafka outage must not fail an auth request.
+- `src/lib/events.ts` — the event catalogue. Envelope:
+  `{ eventType, eventVersion, occurredAt, data }`, message key = `userId`.
+
+Current events:
+
+| eventType | when | consumer |
+|---|---|---|
+| `PasswordResetRequested` (v1) | `POST /api/v1/auth/password/forgot` for a real, eligible account | `notification-service` → sends the reset email |
+
+`data` for `PasswordResetRequested`: `{ userId, email, otp, expiresAt }`.
+`otp` is the raw 6-digit code. Because that code is a live credential, the
+`auth.events` topic is configured with a **1-hour retention** (see
+`docker-compose.kafka.yml`) and the code TTL is 10 minutes.
+A stronger design — emit only `userId` and have the consumer call back for a
+code — is noted but not built.

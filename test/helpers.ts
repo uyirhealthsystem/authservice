@@ -19,13 +19,13 @@ export const uniqueEmail = (prefix = "user") => `${prefix}+${Date.now()}-${seq++
 
 /** Register through a portal. Returns the parsed JSON body + status. */
 export async function register(body: Record<string, unknown>) {
-  const res = await api.post("/auth/email/register").send(body);
+  const res = await api.post("/api/v1/auth/email/register").send(body);
   return { status: res.status, body: res.body };
 }
 
 /** Log in through a portal. Returns status, body and any Set-Cookie header. */
 export async function login(body: Record<string, unknown>) {
-  const res = await api.post("/auth/email/login").send(body);
+  const res = await api.post("/api/v1/auth/email/login").send(body);
   return { status: res.status, body: res.body, cookies: cookieHeader(res) };
 }
 

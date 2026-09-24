@@ -13,7 +13,7 @@ vi.mock("../src/lib/googleOAuth", async (importOriginal) => {
 import { verifyGoogleIdToken } from "../src/lib/googleOAuth";
 const mockVerify = vi.mocked(verifyGoogleIdToken);
 
-describe("POST /auth/google/native", () => {
+describe("POST /api/v1/auth/google/native", () => {
   beforeEach(() => {
     mockVerify.mockReset();
     return resetDb();
@@ -23,7 +23,7 @@ describe("POST /auth/google/native", () => {
     mockVerify.mockResolvedValue({ sub: "google-sub-1", email: uniqueEmail("g"), email_verified: true });
 
     const res = await api
-      .post("/auth/google/native")
+      .post("/api/v1/auth/google/native")
       .send({ idToken: "fake", clientId: "patient-app" });
 
     expect(res.status).toBe(200);
@@ -37,7 +37,7 @@ describe("POST /auth/google/native", () => {
     const reg = await register({ email, password: PASSWORD, clientId: "patient-app" });
     mockVerify.mockResolvedValue({ sub: "google-sub-2", email, email_verified: true });
 
-    const res = await api.post("/auth/google/native").send({ idToken: "fake", clientId: "patient-app" });
+    const res = await api.post("/api/v1/auth/google/native").send({ idToken: "fake", clientId: "patient-app" });
     expect(res.status).toBe(200);
 
     const identities = await prisma.identity.findMany({ where: { userId: reg.body.id } });
@@ -46,7 +46,7 @@ describe("POST /auth/google/native", () => {
 
   it("rejects a web portal clientId (400 NOT_A_NATIVE_CLIENT)", async () => {
     mockVerify.mockResolvedValue({ sub: "google-sub-3", email: uniqueEmail(), email_verified: true });
-    const res = await api.post("/auth/google/native").send({ idToken: "fake", clientId: "patient-portal" });
+    const res = await api.post("/api/v1/auth/google/native").send({ idToken: "fake", clientId: "patient-portal" });
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe("NOT_A_NATIVE_CLIENT");
   });
@@ -54,7 +54,7 @@ describe("POST /auth/google/native", () => {
   it("a fresh service-provider Google signup is PENDING and cannot get a session yet", async () => {
     mockVerify.mockResolvedValue({ sub: "google-sub-4", email: uniqueEmail("sp"), email_verified: true });
     const res = await api
-      .post("/auth/google/native")
+      .post("/api/v1/auth/google/native")
       .send({ idToken: "fake", clientId: "service-provider-app", role: "DOCTOR" });
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe("PENDING_APPROVAL");

@@ -19,10 +19,18 @@ export async function registerWithEmail(
   // user picked (validated against the portal's allowed set).
   const role = resolveRegistrationRole(portal, requestedRole);
 
-  const existing = await prisma.identity.findUnique({
-    where: { provider_providerUserId: { provider: "PASSWORD", providerUserId: email } },
-  });
-  if (existing) throw Errors.conflict("EMAIL_TAKEN", "An account with this email already exists.");
+  // Any account already on this email blocks a fresh registration - whether it
+  // was created with a password or with Google. A Google-first user who also
+  // wants a password uses the forgot/reset flow (POST /api/v1/auth/password/forgot)
+  // to set one; registration can't safely attach a credential to an account
+  // it can't prove the caller owns.
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) {
+    throw Errors.conflict(
+      "EMAIL_TAKEN",
+      "An account with this email already exists. If you signed up with Google, use \"forgot password\" to set a password for it.",
+    );
+  }
 
   const credentialHash = await hashPassword(password);
 

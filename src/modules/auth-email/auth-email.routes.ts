@@ -16,7 +16,7 @@ import { requireAuth } from "../../middleware/authGuard";
 export const authEmailRouter = Router();
 
 authEmailRouter.post(
-  "/auth/email/register",
+  "/email/register",
   authAttemptLimiter,
   asyncHandler(async (req, res) => {
     const { email, password, clientId, role } = registerSchema.parse(req.body);
@@ -34,7 +34,7 @@ authEmailRouter.post(
 );
 
 authEmailRouter.post(
-  "/auth/email/login",
+  "/email/login",
   authAttemptLimiter,
   asyncHandler(async (req, res) => {
     const { email, password, clientId } = loginSchema.parse(req.body);
@@ -49,7 +49,7 @@ authEmailRouter.post(
 );
 
 authEmailRouter.post(
-  "/auth/token/refresh",
+  "/token/refresh",
   asyncHandler(async (req, res) => {
     refreshSchema.parse(req.body ?? {});
     // Native clients send the refresh token in the body; web sends the
@@ -69,7 +69,7 @@ authEmailRouter.post(
 );
 
 authEmailRouter.post(
-  "/auth/logout",
+  "/logout",
   asyncHandler(async (req, res) => {
     logoutSchema.parse(req.body ?? {});
     const { token } = readPresentedRefreshToken(req);
@@ -82,7 +82,7 @@ authEmailRouter.post(
 // Sign out every device. Needs a valid access token (Authorization: Bearer),
 // not the refresh token - it acts on the whole account, not one session.
 authEmailRouter.post(
-  "/auth/logout-all",
+  "/logout-all",
   requireAuth(),
   asyncHandler(async (req, res) => {
     const revokedSessions = await revokeAllSessionsForUser(req.auth!.userId);

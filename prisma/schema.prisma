@@ -27,8 +27,9 @@ model User {
   updatedAt    DateTime   @updatedAt
   lastLoginAt  DateTime?
 
-  identities Identity[]
-  sessions   Session[]
+  identities          Identity[]
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
 
   @@map("users")
 }
@@ -60,6 +61,28 @@ model Identity {
 enum AuthProvider {
   PASSWORD
   GOOGLE
+}
+
+// Short-lived, single-use OTPs for the forgot/reset-password flow. Only the
+// SHA-256 hash is stored (same pattern as RefreshToken); the raw 6-digit code
+// goes out in the email and is never persisted. `usedAt` marks redemption -
+// redeeming one also stamps `usedAt` on the user's other outstanding codes.
+// A Google-first user with no password uses this flow to set their first one.
+// codeHash is NOT unique - a 6-digit code can coincidentally repeat across
+// users, so lookups are always scoped by userId (resolved from the email in
+// the request) as well as the hash.
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  codeHash  String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 // RSA signing keys for access tokens. Exactly one ACTIVE at a time

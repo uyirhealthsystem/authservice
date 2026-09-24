@@ -1,0 +1,434 @@
+{
+  "info": {
+    "name": "Uyir authservice",
+    "_postman_id": "a1c9f4e2-7b3d-4c1a-9e58-uyirauthsvc001",
+    "description": "The Uyir `authservice` API (default http://localhost:4000).\n\nOrganised and documented to the platform **API Naming Convention** (`docs/API_NAMING_CONVENTION.md`). Where authservice deviates from the convention it is because of §12 (\"authservice today — known deviations\"):\n\n- **No `/v1` prefix** yet — routes are `/api/v1/auth/email/login`, treated as v1 until the next breaking change.\n- **Auth paths are grouped by flow, not resource** — `/api/v1/auth/email/*`, `/api/v1/auth/google/*`, `/api/v1/auth/token/refresh`. The \"resource\" is a session/token flow, not a CRUD entity.\n- **Login / refresh responses are unwrapped** (`{ \"accessToken\": …, \"role\": … }`) for client compatibility. Newer endpoints (`/api/v1/auth/users/*`) wrap under the resource name (`{ \"user\": {…} }`, `{ \"users\": [...] }`).\n\nConventions that DO hold everywhere here:\n- Error shape: `{ \"error\": { \"code\": \"SCREAMING_SNAKE\", \"message\": \"…\" } }`; validation errors add `details`. Clients branch on `code`, never on `message` or status alone.\n- Request/response keys are `camelCase`; enum values (`role`, `status`) are `SCREAMING_SNAKE_CASE` strings.\n- Identity is only ever `Authorization: Bearer <RS256 JWT>` — no `X-User-Id`, no user id in the URL for \"me\".\n- `X-Request-Id` is propagated on every request (this collection sends one per request).\n\n**Portals** (`clientId` in the request body / query — pick the one your caller represents):\n\n| clientId | kind | roles | refresh token delivery | new account |\n|---|---|---|---|---|\n| `patient-app` | native | PATIENT | body `refreshToken` | ACTIVE |\n| `patient-portal` | web | PATIENT | httpOnly cookie | ACTIVE |\n| `service-provider-app` | native, multi-role | DOCTOR / HOSPITAL / LS / AMBULANCE_DRIVER / PRO (send `role`) | body `refreshToken` | PENDING (needs admin approval) |\n| `admin-portal` | web | ADMIN | httpOnly cookie | PENDING (needs SUPER_ADMIN approval) |\n| `superadmin-portal` | web | SUPER_ADMIN | httpOnly cookie | ACTIVE |\n\nSet `{{clientId}}` in the environment. Run **Email auth › Login** (or **Google auth › Native**) to populate `{{accessToken}}` / `{{refreshToken}}`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": { "type": "noauth" },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000" },
+    { "key": "clientId", "value": "patient-app" },
+    { "key": "email", "value": "user@example.com" },
+    { "key": "password", "value": "password123" },
+    { "key": "accessToken", "value": "" },
+    { "key": "refreshToken", "value": "" },
+    { "key": "adminAccessToken", "value": "" },
+    { "key": "googleRedirectUri", "value": "http://localhost:5173/auth/google/callback" },
+    { "key": "userId", "value": "" }
+  ],
+  "event": [
+    {
+      "listen": "prerequisite",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// §10 - propagate a correlation id on every inbound request.",
+          "pm.request.headers.upsert({ key: 'X-Request-Id', value: pm.variables.replaceIn('{{$guid}}') });"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Convention checks that apply to every response.",
+          "pm.test('error responses use the standard envelope', function () {",
+          "  if (pm.response.code >= 400) {",
+          "    var body; try { body = pm.response.json(); } catch (e) { return; }",
+          "    pm.expect(body, 'has error object').to.have.property('error');",
+          "    pm.expect(body.error, 'error.code').to.have.property('code').that.is.a('string');",
+          "    pm.expect(body.error.code, 'code is SCREAMING_SNAKE').to.match(/^[A-Z][A-Z0-9_]*$/);",
+          "  }",
+          "});"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Infrastructure",
+      "description": "Unversioned infrastructure contracts (§2.4, §9). No auth, ever.",
+      "item": [
+        {
+          "name": "Health - GET /health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] },
+            "description": "Liveness + a real dependency check (`SELECT 1`). `200 { \"status\": \"ok\" }` or `503 { \"status\": \"unavailable\" }`."
+          },
+          "response": []
+        },
+        {
+          "name": "JWKS - GET /.well-known/jwks.json",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/.well-known/jwks.json",
+              "host": ["{{baseUrl}}"],
+              "path": [".well-known", "jwks.json"]
+            },
+            "description": "Public RS256 signing keys. Every other service fetches this once, caches by `kid`, refetches on a `kid` miss, and verifies access tokens locally (§10, §11)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Email auth",
+      "description": "Email + password login flow. `/api/v1/auth/email/register`, `/api/v1/auth/email/login` and `/api/v1/auth/google/native` are rate limited (default 20 attempts / 15 min per IP → `429 RATE_LIMITED`).",
+      "item": [
+        {
+          "name": "Register - POST /api/v1/auth/email/register",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                  "var body; try { body = pm.response.json(); } catch (e) { return; }",
+                  "if (body.id) pm.collectionVariables.set('userId', body.id);",
+                  "pm.test('role and status are SCREAMING_SNAKE enums', function () {",
+                  "  pm.expect(body.role).to.match(/^[A-Z_]+$/);",
+                  "  pm.expect(body.status).to.match(/^[A-Z_]+$/);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"clientId\": \"{{clientId}}\",\n  \"role\": \"DOCTOR\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/email/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "email", "register"]
+            },
+            "description": "Body: `email`, `password` (≥ 8 chars), `clientId` (portal). `role` is **only** used by multi-role portals (`service-provider-app`) and must be one of DOCTOR / HOSPITAL / LS / AMBULANCE_DRIVER / PRO — single-role portals ignore it, so drop the line for `patient-app`.\n\n`201 { id, email, role, status, pendingApproval }`. `pendingApproval: true` (status `PENDING`) means an ADMIN / SUPER_ADMIN must approve before login works.\n\nErrors: `VALIDATION_ERROR` (400), `UNKNOWN_PORTAL` (400), `ROLE_REQUIRED` / `ROLE_NOT_ALLOWED` (400), `CONFLICT_EMAIL_TAKEN` (409)."
+          },
+          "response": []
+        },
+        {
+          "name": "Login - POST /api/v1/auth/email/login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "var body; try { body = pm.response.json(); } catch (e) { return; }",
+                  "if (body.accessToken) pm.collectionVariables.set('accessToken', body.accessToken);",
+                  "// Native portals return the refresh token in the body; web portals set an httpOnly cookie.",
+                  "if (body.refreshToken) pm.collectionVariables.set('refreshToken', body.refreshToken);",
+                  "pm.test('got an access token', () => pm.expect(body.accessToken).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"clientId\": \"{{clientId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/email/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "email", "login"]
+            },
+            "description": "`200 { accessToken, role }` — plus `refreshToken` in the body for native portals; web portals instead get a `Set-Cookie` httpOnly refresh cookie.\n\nErrors: `INVALID_CREDENTIALS` (401), `PENDING_APPROVAL` (403), `ACCOUNT_DISABLED` (403), `FORBIDDEN` (403, account role not served by this portal), `RATE_LIMITED` (429)."
+          },
+          "response": []
+        },
+        {
+          "name": "Forgot password - POST /api/v1/auth/password/forgot",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"clientId\": \"{{clientId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/password/forgot",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "password", "forgot"]
+            },
+            "description": "Start setting or resetting a password - one flow for a Google-first user who wants their first password AND for a genuine 'forgot password'. Always `202` regardless of whether the email has an account (no enumeration). On a real hit, authservice mints a 10-min single-use 6-digit code and emits a `PasswordResetRequested` event to Kafka; `notification-service` sends the email. Copy the code from that email into the environment as `{{resetOtp}}` for the next request.\n\nErrors: `UNKNOWN_PORTAL` (400), `RATE_LIMITED` (429)."
+          },
+          "response": []
+        },
+        {
+          "name": "Reset password - POST /api/v1/auth/password/reset",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"otp\": \"{{resetOtp}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/password/reset",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "password", "reset"]
+            },
+            "description": "Redeem the emailed code and set the new password. Creates the PASSWORD login for a Google-first account, or replaces the hash for a genuine reset. On success every existing session on the account is revoked (all devices must re-login) and other outstanding codes are invalidated.\n\n`204 No Content`. Errors: `INVALID_RESET_CODE` (400 - unknown email, or code wrong / used / expired), `RATE_LIMITED` (429)."
+          },
+          "response": []
+        },
+        {
+          "name": "Refresh token - POST /api/v1/auth/token/refresh",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "var body; try { body = pm.response.json(); } catch (e) { return; }",
+                  "if (body.accessToken) pm.collectionVariables.set('accessToken', body.accessToken);",
+                  "if (body.refreshToken) pm.collectionVariables.set('refreshToken', body.refreshToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/token/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "token", "refresh"]
+            },
+            "description": "Rotating refresh (§2.3 action endpoint). Native clients send `{ refreshToken }` in the body and get `{ accessToken, refreshToken }` back. Web clients send **no body** — the refresh cookie is read and a new one is set; response is `{ accessToken }`.\n\nFor a web portal, delete the body (send `{}`) and let Postman's cookie jar carry the cookie.\n\nErrors: `NOT_AUTHENTICATED` (401, missing / unknown / expired / already-rotated token)."
+          },
+          "response": []
+        },
+        {
+          "name": "Logout - POST /api/v1/auth/logout",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/logout", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "logout"] },
+            "description": "Revokes the one session behind the presented refresh token (body for native, cookie for web) and clears the cookie. `204` with no body — idempotent, `204` even if the token was already gone."
+          },
+          "response": []
+        },
+        {
+          "name": "Logout all devices - POST /api/v1/auth/logout-all",
+          "request": {
+            "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/logout-all", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "logout-all"] },
+            "description": "Acts on the whole account, so it needs a valid **access token** (`Authorization: Bearer`), not the refresh token. Revokes every session for the caller. `200 { revokedSessions: <n> }`.\n\nErrors: `NOT_AUTHENTICATED` (401)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Google auth",
+      "description": "Google sign-in. Web portals use the browser redirect flow (`/start` → Google → `/callback`); native portals POST a Google ID token to `/native`. Requires `GOOGLE_*` env config or every route here returns `503 SERVICE_UNAVAILABLE`.",
+      "item": [
+        {
+          "name": "Start (web redirect) - GET /api/v1/auth/google/start",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/google/start?clientId={{clientId}}&redirectUri={{googleRedirectUri}}&role=DOCTOR",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "google", "start"],
+              "query": [
+                { "key": "clientId", "value": "{{clientId}}" },
+                { "key": "redirectUri", "value": "{{googleRedirectUri}}", "description": "Must be on GOOGLE_ALLOWED_PORTAL_REDIRECT_URIS." },
+                { "key": "role", "value": "DOCTOR", "description": "Only for a multi-role WEB portal; omit otherwise." }
+              ]
+            },
+            "description": "Sets a short-lived PKCE + state cookie and `302`-redirects to Google's consent screen. Turn OFF \"Automatically follow redirects\" in Postman settings to see the `Location` header.\n\nErrors: `SERVICE_UNAVAILABLE` (503, Google not configured), `REDIRECT_URI_NOT_ALLOWED` (400), `UNKNOWN_PORTAL` (400), `PROVIDER_NOT_ALLOWED` (400), `USE_NATIVE_GOOGLE` (400, portal is a native client)."
+          },
+          "response": []
+        },
+        {
+          "name": "Callback - GET /api/v1/auth/google/callback",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/google/callback?code=<from-google>&state=<from-google>",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "google", "callback"],
+              "query": [
+                { "key": "code", "value": "<from-google>" },
+                { "key": "state", "value": "<from-google>" }
+              ]
+            },
+            "description": "Google redirects the browser here. Exchanges the code, sets the refresh cookie, and `302`s back to the portal `redirectUri` with `?accessToken=…` (or `?error=<CODE>` on failure — e.g. `PENDING_APPROVAL`, `STATE_MISMATCH`, `ACCOUNT_DISABLED`). Normally driven by the browser, not called directly."
+          },
+          "response": []
+        },
+        {
+          "name": "Native (ID token) - POST /api/v1/auth/google/native",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "var body; try { body = pm.response.json(); } catch (e) { return; }",
+                  "if (body.accessToken) pm.collectionVariables.set('accessToken', body.accessToken);",
+                  "if (body.refreshToken) pm.collectionVariables.set('refreshToken', body.refreshToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idToken\": \"<google-id-token>\",\n  \"clientId\": \"{{clientId}}\",\n  \"role\": \"DOCTOR\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/google/native",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "google", "native"]
+            },
+            "description": "The app runs Google Sign-In with its own SDK, gets an ID token, and posts it here. No browser, no PKCE cookie. `role` required for `service-provider-app`. `200 { accessToken, role, refreshToken }`.\n\nErrors: `VALIDATION_ERROR` (400), `NOT_A_NATIVE_CLIENT` (400), `PENDING_APPROVAL` (403), `RATE_LIMITED` (429)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "description": "Back-office user approval. Every route needs a valid **ADMIN** or **SUPER_ADMIN** access token (`403 FORBIDDEN` otherwise). Newer endpoints — responses wrap under the resource name (§6.1 / §6.2).",
+      "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{adminAccessToken}}", "type": "string" }] },
+      "item": [
+        {
+          "name": "List pending users - GET /api/v1/auth/users?status=PENDING",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/users?status=PENDING",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "users"], "query": [{ "key": "status", "value": "PENDING" }]
+            },
+            "description": "Users with `status: PENDING` that the caller may act on (an ADMIN sees provider accounts; a SUPER_ADMIN also sees pending ADMINs). `200 { users: [ … ] }`."
+          },
+          "response": []
+        },
+        {
+          "name": "Approve user - POST /api/v1/auth/users/:userId/approve",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/users/{{userId}}/approve",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "users", "{{userId}}", "approve"],
+              "variable": [{ "key": "userId", "value": "{{userId}}", "description": "uuid" }]
+            },
+            "description": "State-transition action (§2.3). Flips `PENDING → ACTIVE`. `200 { user: { … } }`.\n\nErrors: `NOT_AUTHENTICATED` (401), `FORBIDDEN` (403), `NOT_FOUND` (404), `CONFLICT_NOT_PENDING` (409)."
+          },
+          "response": []
+        },
+        {
+          "name": "Reject user - POST /api/v1/auth/users/:userId/reject",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/users/{{userId}}/reject",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "users", "{{userId}}", "reject"],
+              "variable": [{ "key": "userId", "value": "{{userId}}", "description": "uuid" }]
+            },
+            "description": "State-transition action (§2.3). Rejects a pending signup. `200 { user: { … } }`. Same error set as approve."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Convention reference (negative cases)",
+      "description": "Requests that deliberately fail, to show the standard error envelope (§7) and status mapping (§8).",
+      "item": [
+        {
+          "name": "Unknown route -> 404 NOT_FOUND",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/v1/nope", "host": ["{{baseUrl}}"], "path": ["v1", "nope"] }
+          },
+          "response": []
+        },
+        {
+          "name": "Bad body -> 400 VALIDATION_ERROR (+ details)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"not-an-email\",\n  \"password\": \"short\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/email/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "email", "register"]
+            },
+            "description": "Missing `clientId`, invalid `email`, too-short `password`. `400 { error: { code: \"VALIDATION_ERROR\", message, details } }`."
+          },
+          "response": []
+        },
+        {
+          "name": "Unknown portal -> 400 UNKNOWN_PORTAL",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"clientId\": \"no-such-portal\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/email/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "email", "login"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Protected route, no token -> 401 NOT_AUTHENTICATED",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/users?status=PENDING",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "users"], "query": [{ "key": "status", "value": "PENDING" }]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

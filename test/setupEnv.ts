@@ -16,6 +16,9 @@ process.env.COOKIE_DOMAIN ??= "localhost";
 // Don't let the brute-force limiter trip across the whole suite (one IP, one
 // process). One dedicated test lowers it deliberately.
 process.env.AUTH_RATE_LIMIT_MAX ??= "100000";
+// No Kafka in the test suite - the producer no-ops and tests that care about
+// emitted events mock src/lib/events.ts directly.
+process.env.KAFKA_BROKERS ??= "";
 
 if (!process.env.DATABASE_URL) {
   throw new Error(

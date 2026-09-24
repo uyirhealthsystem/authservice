@@ -2,6 +2,19 @@
 
 Base URL (local dev): `http://localhost:4000`
 
+All routes live under **`/api/v1/auth`**, except the two unversioned
+infrastructure endpoints `GET /health` and `GET /.well-known/jwks.json`
+(see `docs/API_NAMING_CONVENTION.md`).
+
+> **Legacy paths (deprecated).** The old unversioned paths still work and
+> behave identically, with a `Deprecation: true` response header:
+> `/auth/*` → `/api/v1/auth/*`, `/admin/users/pending` →
+> `/api/v1/auth/users?status=PENDING`, `/admin/users/:id/{approve,reject}` →
+> `/api/v1/auth/users/:id/{approve,reject}`. They will be removed once every
+> client has moved. A web portal's refresh cookie is scoped to whichever
+> prefix it logged in on, so switching a portal to `/api/v1/auth` logs its
+> users out once.
+
 All error responses share one shape:
 ```json
 { "error": { "code": "SOME_CODE", "message": "Human-readable message." } }
@@ -24,7 +37,7 @@ shapes:
   the role is fixed by the `clientId`. Nothing to pick.
 - **The service-provider portal**: one app for all four professional roles.
   The user picks their role when they sign up — `role` in the
-  `/auth/email/register` body, or `role` in the `/auth/google/native` body —
+  `/api/v1/auth/email/register` body, or `role` in the `/api/v1/auth/google/native` body —
   one of `DOCTOR` / `HOSPITAL` / `LS` / `AMBULANCE_DRIVER`. It is stored on
   the account permanently. Login returns it (in the token and the response)
   so the mobile app can route to the right role-based UI; login itself never
@@ -40,14 +53,14 @@ The **client** column above splits the portals by how they carry the refresh
 token and do Google sign-in:
 
 - **web** (`patient-portal`, `admin-portal`, `superadmin-portal`): the
-  refresh token is an httpOnly `refresh_token` cookie (`Path=/auth`). Google
-  sign-in is the browser redirect flow (`/auth/google/start` →
-  `/auth/google/callback`).
+  refresh token is an httpOnly `refresh_token` cookie (`Path=/api/v1/auth`). Google
+  sign-in is the browser redirect flow (`/api/v1/auth/google/start` →
+  `/api/v1/auth/google/callback`).
 - **native** (`patient-app`, `service-provider-app`): no cookie — login and
   refresh return the refresh token **as a string in the JSON body**, and the
-  app stores it itself (Keychain / Keystore). `/auth/token/refresh` and
-  `/auth/logout` take it back in the request body. Google sign-in is
-  `POST /auth/google/native` (the app runs Google Sign-In with its own SDK
+  app stores it itself (Keychain / Keystore). `/api/v1/auth/token/refresh` and
+  `/api/v1/auth/logout` take it back in the request body. Google sign-in is
+  `POST /api/v1/auth/google/native` (the app runs Google Sign-In with its own SDK
   and posts the ID token — no browser).
 
 The rotation + reuse-detection machinery is identical for both; only the
@@ -105,7 +118,7 @@ resources) are entirely your service's call — authservice only vouches for
 
 ## Email/password auth
 
-### `POST /auth/email/register`
+### `POST /api/v1/auth/email/register`
 ```json
 { "email": "meera@example.com", "password": "at-least-8-chars",
   "clientId": "service-provider-app", "role": "DOCTOR" }
@@ -118,13 +131,17 @@ resources) are entirely your service's call — authservice only vouches for
 - `service-provider-app` and `admin-portal` accounts are created `PENDING`
   and must be approved before they can log in.
 - `201 { "id": "...", "email": "...", "role": "DOCTOR", "status": "PENDING", "pendingApproval": true }`
-- `409 EMAIL_TAKEN`
+- `409 EMAIL_TAKEN` — some account already uses this email, **including one
+  created with Google**. A Google-first user who also wants a password uses
+  the forgot/reset flow (`POST /api/v1/auth/password/forgot`) to set one — a plain
+  registration can't safely attach a password to an account it can't prove
+  the caller owns.
 - `400 UNKNOWN_PORTAL` — unrecognized `clientId`.
 - `400 PROVIDER_NOT_ALLOWED` — that portal doesn't accept password login.
 - `400 ROLE_REQUIRED` — `service-provider-app` with no `role` in the body.
 - `400 ROLE_NOT_ALLOWED` — `role` is not one this portal offers.
 
-### `POST /auth/email/login`
+### `POST /api/v1/auth/email/login`
 ```json
 { "email": "meera@example.com", "password": "...", "clientId": "service-provider-app" }
 ```
@@ -137,7 +154,7 @@ The refresh token delivery depends on the portal's client type:
   — no cookie. Store `refreshToken` in the OS secure store.
 - **web** (`patient-portal`, `admin-portal`, `superadmin-portal`):
   `200 { "accessToken": "<JWT>", "role": "DOCTOR" }` + `Set-Cookie:
-  refresh_token=…; HttpOnly; Path=/auth`.
+  refresh_token=…; HttpOnly; Path=/api/v1/auth`.
 
 Errors:
 - `401 INVALID_CREDENTIALS`
@@ -148,7 +165,44 @@ Errors:
   (e.g. a `PATIENT` account trying `service-provider-app`).
 - `429 RATE_LIMITED` — 20 attempts / 15 min per IP.
 
-### `POST /auth/token/refresh`
+### `POST /api/v1/auth/password/forgot`
+Start setting or resetting a password. **One flow, two cases:** a Google-first
+user setting their first password, and a user who forgot theirs. A 6-digit
+code is emailed — delivery is handled by `notification-service`, reached via a
+`PasswordResetRequested` event on the `auth.events` Kafka topic (see
+[ARCHITECTURE.md → Events](ARCHITECTURE.md)).
+```json
+{ "email": "meera@example.com", "clientId": "patient-portal" }
+```
+- **Always `202 { "message": "If an account exists for that email, a code has been sent." }`** —
+  the response never reveals whether the email has an account. If it doesn't
+  (or the account is disabled, or a Google account has no email), nothing is
+  sent.
+- The emailed code is 6 digits, valid for **10 minutes**, single-use.
+- If Kafka is not configured/reachable, this still returns `202` but no email
+  goes out (the event producer is best-effort).
+- `400 UNKNOWN_PORTAL` — unrecognized `clientId`.
+- `429 RATE_LIMITED`.
+
+### `POST /api/v1/auth/password/reset`
+Redeem the emailed code and set the new password.
+```json
+{ "email": "meera@example.com", "otp": "123456", "password": "at-least-8-chars" }
+```
+- Creates the `PASSWORD` login for an account that never had one (Google-first
+  user) **or** replaces the existing password hash.
+- On success, **every existing session on the account is revoked** — all
+  devices must log in again. Other outstanding codes are invalidated too.
+- `204 No Content`.
+- `400 INVALID_RESET_CODE` — unknown email, or a code that's wrong,
+  already-used, or expired.
+- `429 RATE_LIMITED`.
+
+Afterwards `POST /api/v1/auth/email/login` with that email + the new password logs
+into the **same** account (`role` / `status` / portal rules unchanged), and
+Google sign-in for that email still works — both methods reach one account.
+
+### `POST /api/v1/auth/token/refresh`
 Rotates the refresh token. Reusing an already-rotated token revokes the
 whole session.
 - **native**: body `{ "refreshToken": "<opaque>" }` →
@@ -160,15 +214,15 @@ whole session.
 - `401 NOT_AUTHENTICATED` (missing / unknown / expired) / `403 FORBIDDEN`
   (reuse detected — session revoked).
 
-### `POST /auth/logout`
+### `POST /api/v1/auth/logout`
 Revokes the session and clears the cookie.
 - **native**: body `{ "refreshToken": "<opaque>" }`.
 - **web**: no body, reads the cookie.
 - `204 No Content` either way, even if no token was supplied.
 
-### `POST /auth/logout-all`
+### `POST /api/v1/auth/logout-all`
 Sign out **every device**. Revokes every live session on the account, on
-every portal. Unlike `/auth/logout` this acts on the whole account, so it
+every portal. Unlike `/api/v1/auth/logout` this acts on the whole account, so it
 takes the **access token**, not a refresh token:
 
 `Authorization: Bearer <accessToken>` (no body).
@@ -178,7 +232,7 @@ takes the **access token**, not a refresh token:
 - Access tokens already handed out stay valid until they expire (≤ 15 min) —
   they're stateless JWTs — but no session can be **refreshed** again, so
   every device is fully logged out within that window. A revoked session's
-  next `/auth/token/refresh` returns `403 FORBIDDEN`.
+  next `/api/v1/auth/token/refresh` returns `403 FORBIDDEN`.
 
 ---
 
@@ -187,7 +241,7 @@ takes the **access token**, not a refresh token:
 Optional at boot — returns `503 SERVICE_UNAVAILABLE` until Google is
 configured. The **web redirect flow** needs `GOOGLE_CLIENT_ID` /
 `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI`. The **native flow**
-(`/auth/google/native`) needs only `GOOGLE_CLIENT_ID`, plus
+(`/api/v1/auth/google/native`) needs only `GOOGLE_CLIENT_ID`, plus
 `GOOGLE_NATIVE_CLIENT_IDS` (the iOS/Android OAuth client IDs, comma-separated)
 if the app's ID token has a different `aud` than the web client.
 
@@ -195,9 +249,9 @@ if the app's ID token has a different `aud` than the web client.
 
 For **web** portals only. A native `clientId` (`patient-app`,
 `service-provider-app`) is rejected with `400 USE_NATIVE_GOOGLE` — those use
-`/auth/google/native` below.
+`/api/v1/auth/google/native` below.
 
-#### `GET /auth/google/start?clientId=…&redirectUri=<portal-callback>`
+#### `GET /api/v1/auth/google/start?clientId=…&redirectUri=<portal-callback>`
 Browser top-level navigation — redirects to Google's consent screen.
 - `clientId` must be a **web** portal with `GOOGLE` in `allowedProviders`.
   In practice that's `patient-portal` (the admin portals are password-only).
@@ -208,7 +262,7 @@ Browser top-level navigation — redirects to Google's consent screen.
 - A `role` query param is accepted for a hypothetical multi-role web portal
   but is unused today (every multi-role portal is native).
 
-#### `GET /auth/google/callback`
+#### `GET /api/v1/auth/google/callback`
 Google redirects here. On success, redirects to the portal's `redirectUri`
 with `?accessToken=<JWT>` and sets the refresh-token cookie.
 
@@ -218,13 +272,24 @@ rendering a JSON error, since the user has already left the portal's origin.
 
 A brand-new Google login creates the account with the portal's role (web
 portals with Google are single-role today). An existing account's stored
-role must be one the portal serves, exactly like email login. Google
-account-linking to an existing password account still only happens when
-Google reports `email_verified`.
+role must be one the portal serves, exactly like email login.
+
+**Linking, both directions:**
+- *Password account → Google:* signing in with Google on an email that
+  already has a password account attaches a `GOOGLE` identity to that same
+  account — but **only when Google reports `email_verified`** (otherwise
+  anyone could claim the address at Google and take the account over).
+- *Google account → password:* the Google-first user runs the forgot/reset
+  flow — `POST /api/v1/auth/password/forgot` → emailed code → `POST /api/v1/auth/password/reset` —
+  which creates the `PASSWORD` identity. Registering the email afresh is
+  refused with `409 EMAIL_TAKEN`.
+
+Either way the result is one `User` row with two `Identity` rows, and both
+login methods reach it.
 
 ### Native flow
 
-#### `POST /auth/google/native`
+#### `POST /api/v1/auth/google/native`
 ```json
 { "idToken": "<Google ID token from the native Sign-In SDK>",
   "clientId": "service-provider-app", "role": "DOCTOR" }
@@ -264,17 +329,19 @@ The user object returned by these endpoints:
   "createdAt": "...", "lastLoginAt": null }
 ```
 
-### `GET /admin/users/pending`
+### `GET /api/v1/auth/users?status=PENDING`
 Lists accounts awaiting approval. An `ADMIN` sees only service-provider
 accounts; a `SUPER_ADMIN` also sees `PENDING` admins.
 - `200 { "users": [ <user>, ... ] }`
+- `400 VALIDATION_ERROR` — `status` missing or not `PENDING` (the only
+  listing supported today).
 
-### `POST /admin/users/:id/approve`
+### `POST /api/v1/auth/users/:id/approve`
 Flips a `PENDING` account to `ACTIVE` and stamps `approvedAt` / `approvedById`.
 - `200 { "user": <user> }`
 - `400 NOT_PENDING` — the account is already `ACTIVE` / `DISABLED`.
 - `404 NOT_FOUND` — no such user.
 
-### `POST /admin/users/:id/reject`
+### `POST /api/v1/auth/users/:id/reject`
 Flips a `PENDING` account to `DISABLED`. Same errors as `approve`.
 - `200 { "user": <user> }`

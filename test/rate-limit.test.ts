@@ -29,14 +29,14 @@ describe("auth attempt rate limiting", () => {
 
     const statuses: number[] = [];
     for (let i = 0; i < 6; i++) {
-      statuses.push((await api.post("/auth/email/login").send(body)).status);
+      statuses.push((await api.post("/api/v1/auth/email/login").send(body)).status);
     }
 
     // First few get the normal 401; later ones are blocked.
     expect(statuses.slice(0, 3)).not.toContain(429);
     expect(statuses).toContain(429);
 
-    const blocked = await api.post("/auth/email/login").send(body);
+    const blocked = await api.post("/api/v1/auth/email/login").send(body);
     expect(blocked.status).toBe(429);
     expect(blocked.body.error.code).toBe("RATE_LIMITED");
   });

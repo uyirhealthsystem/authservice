@@ -23,7 +23,7 @@ export function deliverRefreshToken(
   return {};
 }
 
-// The inverse, for /auth/token/refresh and /auth/logout: a native client
+// The inverse, for /api/v1/auth/token/refresh and /api/v1/auth/logout: a native client
 // sends the refresh token in the body, a web client sends the cookie. Body
 // wins if both are somehow present.
 export function readPresentedRefreshToken(req: {

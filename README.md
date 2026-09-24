@@ -30,6 +30,9 @@ npm test    # Vitest + supertest integration suite — see docs/TESTING.md
   each non-obvious decision was made.
 - [`docs/API.md`](docs/API.md) — every HTTP endpoint, including how another
   microservice should verify tokens via JWKS.
+- [`docs/API_NAMING_CONVENTION.md`](docs/API_NAMING_CONVENTION.md) —
+  platform-wide API naming/shape rules every Uyir microservice follows
+  (URLs, methods, field casing, error shape, status codes).
 - [`docs/LEARNING_GUIDE.md`](docs/LEARNING_GUIDE.md) — concept-first
   explanations (JWKS/key rotation, refresh rotation + reuse detection, PKCE,
   portal-decides-role).

@@ -89,7 +89,7 @@
               "mode": "raw",
               "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"clientId\": \"{{clientId}}\",\n  \"role\": \"{{providerRole}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/register", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "register"] },
             "description": "The default {{clientId}} is service-provider-app, which REQUIRES a `role` (DOCTOR/HOSPITAL/LS/AMBULANCE_DRIVER). Single-role portals (patient-*, admin-portal, superadmin-portal) ignore the `role` field. service-provider-app and admin-portal accounts come back status 'PENDING' - approve them via the Admin folder. Returns 409 EMAIL_TAKEN on re-run."
           },
           "event": [
@@ -128,7 +128,7 @@
               "mode": "raw",
               "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"clientId\": \"{{clientId}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/auth/email/login", "host": ["{{baseUrl}}"], "path": ["auth", "email", "login"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/login", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "login"] },
             "description": "Verifies the password, checks the account is ACTIVE (a fresh service-provider/admin account is PENDING -> 403 PENDING_APPROVAL) and that its role is one this portal serves. The default {{clientId}} is service-provider-app, a NATIVE client - so the response body carries `refreshToken` (captured below for Refresh/Logout) and there is no cookie. A web clientId (patient-portal etc.) would set the cookie instead."
           },
           "event": [
@@ -158,12 +158,44 @@
           ]
         },
         {
+          "name": "Forgot Password (start set/reset - Google-first OR forgot)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{email}}\",\n  \"clientId\": \"{{clientId}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/password/forgot", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "password", "forgot"] },
+            "description": "One flow, two cases: a Google-first user setting their first password, and a user who forgot theirs. ALWAYS 202 (no account enumeration). On a real hit authservice mints a 10-min single-use 6-digit code and emits a PasswordResetRequested event to Kafka; notification-service emails the code. Copy that code into {{resetOtp}} for the next request."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('status is 202', () => pm.response.to.have.status(202));"] }
+            }
+          ]
+        },
+        {
+          "name": "Reset Password (redeem the emailed code)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{email}}\",\n  \"otp\": \"{{resetOtp}}\",\n  \"password\": \"{{password}}\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/password/reset", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "password", "reset"] },
+            "description": "Redeem the emailed code and set the new password. Creates the PASSWORD login for a Google-first account or replaces the hash for a genuine reset. On success EVERY session on the account is revoked and sibling codes are invalidated. 204 on success; 400 INVALID_RESET_CODE if the email is unknown, or the code is wrong / used / expired."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('status is 204', () => pm.response.to.have.status(204));"] }
+            }
+          ]
+        },
+        {
           "name": "Refresh Token",
           "request": {
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/token/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "token", "refresh"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/token/refresh", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "token", "refresh"] },
             "description": "Native client: sends the refresh token in the body (captured from Login) and gets a new one back in the body. Web clients omit the body and rely on the cookie Postman holds. Rotating invalidates the previous token instantly."
           },
           "event": [
@@ -188,7 +220,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/logout", "host": ["{{baseUrl}}"], "path": ["auth", "logout"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/logout", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "logout"] },
             "description": "Revokes the session. Native client sends the refresh token in the body; web relies on the cookie. 204 either way, even with no token."
           },
           "event": [
@@ -203,8 +235,8 @@
           "request": {
             "method": "POST",
             "header": [{ "key": "Authorization", "value": "Bearer {{accessToken}}" }],
-            "url": { "raw": "{{baseUrl}}/auth/logout-all", "host": ["{{baseUrl}}"], "path": ["auth", "logout-all"] },
-            "description": "Revokes EVERY session on the account, on every device/portal. Takes the access token (not a refresh token) since it acts on the whole account. Run 'Login' first to populate {{accessToken}}. After this, every device's next /auth/token/refresh fails."
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/logout-all", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "logout-all"] },
+            "description": "Revokes EVERY session on the account, on every device/portal. Takes the access token (not a refresh token) since it acts on the whole account. Run 'Login' first to populate {{accessToken}}. After this, every device's next /api/v1/auth/token/refresh fails."
           },
           "event": [
             {
@@ -228,7 +260,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{superAdminEmail}}\",\n  \"password\": \"{{superAdminPassword}}\",\n  \"clientId\": \"superadmin-portal\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/register", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "register"] },
             "description": "superadmin-portal has autoApprove: true, so this account comes back status ACTIVE and can log in immediately. 409 on re-run is fine."
           },
           "event": [
@@ -247,7 +279,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{superAdminEmail}}\",\n  \"password\": \"{{superAdminPassword}}\",\n  \"clientId\": \"superadmin-portal\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/login", "host": ["{{baseUrl}}"], "path": ["auth", "email", "login"] }
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/login", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "login"] }
           },
           "event": [
             {
@@ -265,7 +297,7 @@
           "request": {
             "method": "GET",
             "header": [{ "key": "Authorization", "value": "Bearer {{superAdminToken}}" }],
-            "url": { "raw": "{{baseUrl}}/admin/users/pending", "host": ["{{baseUrl}}"], "path": ["admin", "users", "pending"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/users?status=PENDING", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "users"], "query": [{ "key": "status", "value": "PENDING" }] },
             "description": "A SUPER_ADMIN sees every PENDING account (including PENDING admins); an ADMIN sees only service-provider accounts."
           },
           "event": [
@@ -286,7 +318,7 @@
           "request": {
             "method": "POST",
             "header": [{ "key": "Authorization", "value": "Bearer {{superAdminToken}}" }],
-            "url": { "raw": "{{baseUrl}}/admin/users/{{pendingUserId}}/approve", "host": ["{{baseUrl}}"], "path": ["admin", "users", "{{pendingUserId}}", "approve"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/users/{{pendingUserId}}/approve", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "users", "{{pendingUserId}}", "approve"] },
             "description": "Flips {{pendingUserId}} (captured in step 3, or by the generic Register call) from PENDING to ACTIVE. That account can now log in. 400 NOT_PENDING if it was already actioned."
           },
           "event": [
@@ -304,7 +336,7 @@
           "request": {
             "method": "POST",
             "header": [{ "key": "Authorization", "value": "Bearer {{superAdminToken}}" }],
-            "url": { "raw": "{{baseUrl}}/admin/users/{{pendingUserId}}/reject", "host": ["{{baseUrl}}"], "path": ["admin", "users", "{{pendingUserId}}", "reject"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/users/{{pendingUserId}}/reject", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "users", "{{pendingUserId}}", "reject"] },
             "description": "Flips a PENDING account to DISABLED - its login attempts then get 403 ACCOUNT_DISABLED. Only run this instead of step 4, not after it (a non-PENDING account gives 400 NOT_PENDING)."
           },
           "event": [
@@ -320,7 +352,7 @@
           "name": "No token → 401",
           "request": {
             "method": "GET",
-            "url": { "raw": "{{baseUrl}}/admin/users/pending", "host": ["{{baseUrl}}"], "path": ["admin", "users", "pending"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/users?status=PENDING", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "users"], "query": [{ "key": "status", "value": "PENDING" }] },
             "description": "The admin routes are the only ones this service guards itself, via requireAuth('ADMIN','SUPER_ADMIN')."
           },
           "event": [
@@ -344,8 +376,8 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"patient.mobile@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"patient-app\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
-            "description": "Single-role portal - no `role` field. Self-activates (status ACTIVE). Native client, so Google sign-in is POST /auth/google/native (see the Google OAuth folder)."
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/register", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "register"] },
+            "description": "Single-role portal - no `role` field. Self-activates (status ACTIVE). Native client, so Google sign-in is POST /api/v1/auth/google/native (see the Google OAuth folder)."
           }
         },
         {
@@ -354,7 +386,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"patient.web@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"patient-portal\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/register", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "register"] },
             "description": "Same role as patient-app - one account can log into both (see 'Demo: Design Properties' step 2)."
           }
         },
@@ -364,7 +396,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"doctor@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"DOCTOR\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/register", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "register"] },
             "description": "One app, role chosen here. Lands PENDING - approve via the Admin folder."
           }
         },
@@ -374,7 +406,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"hospital@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"HOSPITAL\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] }
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/register", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "register"] }
           }
         },
         {
@@ -383,7 +415,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"ls@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"LS\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] }
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/register", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "register"] }
           }
         },
         {
@@ -392,7 +424,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"driver@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"AMBULANCE_DRIVER\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] }
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/register", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "register"] }
           }
         },
         {
@@ -401,7 +433,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"noRole@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"service-provider-app\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/register", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "register"] },
             "description": "Multi-role portal with no `role` in the body."
           },
           "event": [
@@ -416,7 +448,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"badRole@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"PATIENT\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/register", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "register"] },
             "description": "`role` is not one service-provider-app serves."
           },
           "event": [
@@ -431,7 +463,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"admin-portal\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/register", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "register"] },
             "description": "Single-role, no `role` field. Registers PENDING - only a SUPER_ADMIN can approve a PENDING ADMIN. See docs/ARCHITECTURE.md §3a."
           }
         },
@@ -441,7 +473,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"superadmin@example.com\",\n  \"password\": \"Password123!\",\n  \"clientId\": \"superadmin-portal\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/register", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "register"] },
             "description": "The one portal that self-activates (status ACTIVE) - bootstrap account, nobody above it. Anyone who knows this clientId can still mint a SUPER_ADMIN: see docs/ARCHITECTURE.md §7."
           }
         }
@@ -457,7 +489,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{demoEmail}}\",\n  \"password\": \"{{demoPassword}}\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"DOCTOR\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/register", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "register"] },
             "description": "One app for every professional - the role is picked here. Not an autoApprove portal, so the account comes back status PENDING and cannot log in yet. Steps 1a-1d approve it."
           },
           "event": [
@@ -480,7 +512,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{superAdminEmail}}\",\n  \"password\": \"{{superAdminPassword}}\",\n  \"clientId\": \"superadmin-portal\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/register", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "register"] },
             "description": "Self-activates (autoApprove). 409 on re-run is fine."
           },
           "event": [
@@ -496,7 +528,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{superAdminEmail}}\",\n  \"password\": \"{{superAdminPassword}}\",\n  \"clientId\": \"superadmin-portal\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/login", "host": ["{{baseUrl}}"], "path": ["auth", "email", "login"] }
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/login", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "login"] }
           },
           "event": [
             {
@@ -513,7 +545,7 @@
           "request": {
             "method": "GET",
             "header": [{ "key": "Authorization", "value": "Bearer {{superAdminToken}}" }],
-            "url": { "raw": "{{baseUrl}}/admin/users/pending", "host": ["{{baseUrl}}"], "path": ["admin", "users", "pending"] }
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/users?status=PENDING", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "users"], "query": [{ "key": "status", "value": "PENDING" }] }
           },
           "event": [
             {
@@ -532,7 +564,7 @@
           "request": {
             "method": "POST",
             "header": [{ "key": "Authorization", "value": "Bearer {{superAdminToken}}" }],
-            "url": { "raw": "{{baseUrl}}/admin/users/{{demoProviderUserId}}/approve", "host": ["{{baseUrl}}"], "path": ["admin", "users", "{{demoProviderUserId}}", "approve"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/users/{{demoProviderUserId}}/approve", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "users", "{{demoProviderUserId}}", "approve"] },
             "description": "PENDING -> ACTIVE. Now step 2's login can succeed. 400 NOT_PENDING on re-run is fine."
           },
           "event": [
@@ -550,7 +582,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{demoEmail}}\",\n  \"password\": \"{{demoPassword}}\",\n  \"clientId\": \"service-provider-app\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/login", "host": ["{{baseUrl}}"], "path": ["auth", "email", "login"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/login", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "login"] },
             "description": "No `role` on login - the account already has one, returned in the token AND as `role` in the body. service-provider-app is a native client, so the refresh token comes back in the BODY (no cookie) - captured for steps 4-6."
           },
           "event": [
@@ -582,7 +614,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{demoEmail}}\",\n  \"password\": \"{{demoPassword}}\",\n  \"clientId\": \"patient-app\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/login", "host": ["{{baseUrl}}"], "path": ["auth", "email", "login"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/login", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "login"] },
             "description": "Correct password, real account - still rejected, because this account's role (DOCTOR) is not one patient-app serves."
           },
           "event": [
@@ -603,7 +635,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken_gen1}}\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/token/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "token", "refresh"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/token/refresh", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "token", "refresh"] },
             "description": "Sends gen1 in the body, gets gen2 back in the body. gen1 becomes invalid the instant this succeeds."
           },
           "event": [
@@ -629,7 +661,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken_gen1}}\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/token/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "token", "refresh"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/token/refresh", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "token", "refresh"] },
             "description": "Replays gen1, which step 4 already rotated. This simulates a stolen/replayed refresh token - expect the whole session, including the legit gen2, to get revoked."
           },
           "event": [
@@ -650,7 +682,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"{{refreshToken_gen2}}\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/token/refresh", "host": ["{{baseUrl}}"], "path": ["auth", "token", "refresh"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/token/refresh", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "token", "refresh"] },
             "description": "Step 5 didn't just reject the stolen token - it revoked the ENTIRE session. The legitimate, never-compromised gen2 is now dead too, forcing a fresh login."
           },
           "event": [
@@ -670,7 +702,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{demoPatientEmail}}\",\n  \"password\": \"{{demoPassword}}\",\n  \"clientId\": \"patient-app\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/register", "host": ["{{baseUrl}}"], "path": ["auth", "email", "register"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/register", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "register"] },
             "description": "Sets up step 8. Patient portals self-activate - status ACTIVE, no approval. 409 on re-run is fine."
           },
           "event": [
@@ -689,7 +721,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{demoPatientEmail}}\",\n  \"password\": \"{{demoPassword}}\",\n  \"clientId\": \"patient-portal\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/email/login", "host": ["{{baseUrl}}"], "path": ["auth", "email", "login"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/login", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "login"] },
             "description": "Registered through patient-app, logs in fine here - patient-app and patient-portal share a `roles` list and the login check only compares role to role. Independent session, aud is patient-portal."
           },
           "event": [
@@ -708,22 +740,22 @@
     },
     {
       "name": "Google OAuth",
-      "description": "Two separate flows, one per client type. WEB (patient-portal): the browser redirect below - open in a real browser, not Send. NATIVE (patient-app, service-provider-app): POST an ID token to /auth/google/native. The server rejects the wrong pairing (USE_NATIVE_GOOGLE / NOT_A_NATIVE_CLIENT). 503s until Google env is configured.",
+      "description": "Two separate flows, one per client type. WEB (patient-portal): the browser redirect below - open in a real browser, not Send. NATIVE (patient-app, service-provider-app): POST an ID token to /api/v1/auth/google/native. The server rejects the wrong pairing (USE_NATIVE_GOOGLE / NOT_A_NATIVE_CLIENT). 503s until Google env is configured.",
       "item": [
         {
           "name": "WEB: Start Google Login (open in browser)",
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{baseUrl}}/auth/google/start?clientId=patient-portal&redirectUri={{googleRedirectUri}}",
+              "raw": "{{baseUrl}}/api/v1/auth/google/start?clientId=patient-portal&redirectUri={{googleRedirectUri}}",
               "host": ["{{baseUrl}}"],
-              "path": ["auth", "google", "start"],
+              "path": ["api", "v1", "auth", "google", "start"],
               "query": [
                 { "key": "clientId", "value": "patient-portal" },
                 { "key": "redirectUri", "value": "{{googleRedirectUri}}" }
               ]
             },
-            "description": "Copy this URL into a real browser tab. patient-portal is the web patient client; redirectUri is that web app's callback and must be on GOOGLE_ALLOWED_PORTAL_REDIRECT_URIS. After consent, /auth/google/callback redirects to redirectUri with ?accessToken=... and sets the refresh cookie. Only web portals with Google in allowedProviders work here (in practice just patient-portal - the admin portals are password-only)."
+            "description": "Copy this URL into a real browser tab. patient-portal is the web patient client; redirectUri is that web app's callback and must be on GOOGLE_ALLOWED_PORTAL_REDIRECT_URIS. After consent, /api/v1/auth/google/callback redirects to redirectUri with ?accessToken=... and sets the refresh cookie. Only web portals with Google in allowedProviders work here (in practice just patient-portal - the admin portals are password-only)."
           }
         },
         {
@@ -731,9 +763,9 @@
           "request": {
             "method": "GET",
             "url": {
-              "raw": "{{baseUrl}}/auth/google/start?clientId=service-provider-app&redirectUri={{googleRedirectUri}}",
+              "raw": "{{baseUrl}}/api/v1/auth/google/start?clientId=service-provider-app&redirectUri={{googleRedirectUri}}",
               "host": ["{{baseUrl}}"],
-              "path": ["auth", "google", "start"],
+              "path": ["api", "v1", "auth", "google", "start"],
               "query": [
                 { "key": "clientId", "value": "service-provider-app" },
                 { "key": "redirectUri", "value": "{{googleRedirectUri}}" }
@@ -757,7 +789,7 @@
             "method": "POST",
             "header": [{ "key": "Content-Type", "value": "application/json" }],
             "body": { "mode": "raw", "raw": "{\n  \"idToken\": \"<Google ID token from the native Sign-In SDK>\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"DOCTOR\"\n}" },
-            "url": { "raw": "{{baseUrl}}/auth/google/native", "host": ["{{baseUrl}}"], "path": ["auth", "google", "native"] },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/google/native", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "google", "native"] },
             "description": "The MOBILE path - no browser, no redirectUri. The app runs Google Sign-In with its platform SDK, gets an ID token, and posts it here. Server verifies it (aud must be GOOGLE_CLIENT_ID or one of GOOGLE_NATIVE_CLIENT_IDS), then find-or-create + role + status checks like every login. `role` required for service-provider-app, ignored for patient-app. Native portals only - a web clientId gives 400 NOT_A_NATIVE_CLIENT. Returns { accessToken, role, refreshToken } in the body. Needs a real idToken to actually succeed - here as a shape reference."
           }
         }

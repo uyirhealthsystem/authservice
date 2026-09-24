@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { prisma } from "../src/lib/prisma";
 import { register, login, resetDb, uniqueEmail, PASSWORD } from "./helpers";
 
-describe("POST /auth/email/login", () => {
+describe("POST /api/v1/auth/email/login", () => {
   beforeEach(resetDb);
 
   it("returns an access token + refresh cookie for a web portal", async () => {

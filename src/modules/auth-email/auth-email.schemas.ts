@@ -15,7 +15,7 @@ export const loginSchema = z.object({
   clientId: z.string().min(1, "clientId (portal) is required."),
 });
 
-// /auth/token/refresh and /auth/logout: native clients pass the refresh
+// /api/v1/auth/token/refresh and /api/v1/auth/logout: native clients pass the refresh
 // token here; web clients send it as a cookie and omit the body.
 export const refreshSchema = z.object({
   refreshToken: z.string().min(1).optional(),

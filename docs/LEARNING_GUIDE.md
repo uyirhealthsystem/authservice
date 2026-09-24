@@ -89,13 +89,13 @@ who only saw the `code` can't complete the exchange without it.
 
 `src/lib/pkce.ts` was verified byte-for-byte against the official RFC 7636
 test vector during development. The verifier is stashed in an httpOnly
-cookie between `/auth/google/start` and `/auth/google/callback`
+cookie between `/api/v1/auth/google/start` and `/api/v1/auth/google/callback`
 (`sameSite: "lax"`, not `"strict"` — Google's redirect back is a cross-site
 top-level navigation, and `"strict"` cookies are withheld on exactly that).
 
-This whole flow is **web only**. `/auth/google/start` rejects a native
+This whole flow is **web only**. `/api/v1/auth/google/start` rejects a native
 `clientId` with `USE_NATIVE_GOOGLE`, because there is no web page to redirect
-back to. Native apps use `POST /auth/google/native`: the app runs Google
+back to. Native apps use `POST /api/v1/auth/google/native`: the app runs Google
 Sign-In with the platform SDK, gets a Google ID token, and posts it (plus
 `role`, for `service-provider-app`) as a normal JSON body — no redirect, no
 `code` exchange, no PKCE cookie. The server verifies that ID token's
@@ -118,6 +118,48 @@ app, get an unverified token claiming to be you, and take over your
 password account here. `findOrCreateGoogleUser`
 (`src/modules/auth-google/auth-google.service.ts`) only auto-links when
 `email_verified === true`; otherwise it creates a brand-new account.
+
+The other direction — a user who signed up with Google and now also wants
+an email/password login — does **not** go through registration (which is
+refused with `409 EMAIL_TAKEN`, a plain `User.email` unique match). It goes
+through the **same forgot/reset flow** a locked-out password user would use:
+`POST /api/v1/auth/password/forgot` → emailed 6-digit code → `POST /api/v1/auth/password/reset`.
+`resetPassword` (`src/modules/auth-password/auth-password.service.ts`)
+**upserts** the `PASSWORD` identity — creates it if the account never had one
+(the Google-first case), replaces the hash if it did (a genuine "forgot").
+
+The proof of ownership here is *receiving the email*, not an access token —
+which is why the same endpoint safely serves the locked-out user too. One
+mechanism, both cases. Redeeming the code also revokes every existing
+session (a password change should log every device out) and burns the
+account's other outstanding codes.
+
+## 6a. Why the reset code is hashed, short-lived, and single-use
+
+`password_reset_tokens` stores only `sha256(otp)` — the raw code exists only
+in the emailed message (`src/lib/otp.ts`, same pattern as `refreshToken.ts`).
+A leaked database backup then can't be used to reset anyone's password. TTL
+is 10 minutes and redemption stamps `usedAt` on the row *and* every sibling,
+so a code is good for exactly one use within a narrow window. Unlike the
+opaque, effectively-unique tokens elsewhere in this service, a 6-digit code
+has only a million possible values, so `codeHash` isn't a unique column —
+lookups are always scoped by `userId` (resolved from the email in the
+request) as well as the hash. That narrow window matters more than usual
+here because — until a token-exchange hardening lands — the code rides
+inside a Kafka event (§6b).
+
+## 6b. Why sending the email is a different service's job
+
+`authservice` has no SMTP client and never will. `requestPasswordReset`
+generates the code and emits a `PasswordResetRequested` **domain event** to
+the `auth.events` Kafka topic (`src/lib/events.ts`); `notification-service`
+consumes it and sends the mail. Three reasons: SMTP is slow and flaky and
+shouldn't be able to hang an auth request; email templates/identity/retry
+belong in one place, not smeared across every service; and `authservice`
+stays a pure token service that just announces facts. The producer
+(`src/lib/kafka.ts`) is best-effort — no brokers configured, or brokers
+down, and `/api/v1/auth/password/forgot` still returns `202`; the reset email just
+doesn't go out until Kafka and the notification service are up.
 
 ## 7. The portal decides which roles are *possible*; the account carries the one it *has*
 
@@ -149,7 +191,7 @@ general system that could satisfy it.
 Registering creates the account; it does not create the *right to log in*.
 An account from `service-provider-app` or `admin-portal` is `PENDING` and
 login is refused (`403 PENDING_APPROVAL`) until an `ADMIN` or `SUPER_ADMIN`
-flips it to `ACTIVE` via `/admin/users/:id/approve`. (Patients and the
+flips it to `ACTIVE` via `/api/v1/auth/users/:id/approve`. (Patients and the
 first super admin self-activate.)
 
 Two small ideas worth noticing:

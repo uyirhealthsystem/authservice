@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { api, register, resetDb, uniqueEmail, PASSWORD } from "./helpers";
 
-describe("POST /auth/email/register", () => {
+describe("POST /api/v1/auth/email/register", () => {
   beforeEach(resetDb);
 
   it("creates an ACTIVE patient account that can log in immediately", async () => {
@@ -77,7 +77,7 @@ describe("POST /auth/email/register", () => {
 
   it("validates the request body (400 VALIDATION_ERROR)", async () => {
     const res = await api
-      .post("/auth/email/register")
+      .post("/api/v1/auth/email/register")
       .send({ email: "not-an-email", password: "short", clientId: "patient-portal" });
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe("VALIDATION_ERROR");

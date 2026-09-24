@@ -34,7 +34,7 @@ export interface PortalConfig {
   // Native mobile client (React Native / Flutter / native). These have no
   // browser cookie jar, so login/refresh/logout carry the refresh token in
   // the JSON body instead of an httpOnly cookie, and Google sign-in uses the
-  // native ID-token endpoint (POST /auth/google/native) rather than the
+  // native ID-token endpoint (POST /api/v1/auth/google/native) rather than the
   // browser redirect flow. Web portals keep the cookie.
   nativeApp: boolean;
 }

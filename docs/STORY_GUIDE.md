@@ -21,7 +21,7 @@ through **one** app, `service-provider-app`, and picks their role at sign-up.
 
 Ananya, a patient:
 ```http
-POST /auth/email/register
+POST /api/v1/auth/email/register
 { "email": "ananya@example.com", "password": "myS3curePass", "clientId": "patient-app" }
 ```
 ```json
@@ -31,7 +31,7 @@ POST /auth/email/register
 
 Dr. Meera, through the service-provider app, choosing `DOCTOR`:
 ```http
-POST /auth/email/register
+POST /api/v1/auth/email/register
 { "email": "meera@example.com", "password": "herOwnChoice1",
   "clientId": "service-provider-app", "role": "DOCTOR" }
 ```
@@ -55,7 +55,7 @@ this person really is a doctor" before the account can log in. That's Part 1a.
 Dr. Meera tries to log in right after registering:
 
 ```http
-POST /auth/email/login
+POST /api/v1/auth/email/login
 { "email": "meera@example.com", "password": "herOwnChoice1", "clientId": "service-provider-app" }
 ```
 ```json
@@ -66,7 +66,7 @@ POST /auth/email/login
 Meanwhile an admin (logged in through `admin-portal`) checks the queue:
 
 ```http
-GET /admin/users/pending
+GET /api/v1/auth/users?status=PENDING
 Authorization: Bearer <admin's access token>
 ```
 ```json
@@ -74,7 +74,7 @@ Authorization: Bearer <admin's access token>
                    "role": "DOCTOR", "status": "PENDING", ... } ] }
 ```
 ```http
-POST /admin/users/2557.../approve
+POST /api/v1/auth/users/2557.../approve
 Authorization: Bearer <admin's access token>
 ```
 
@@ -91,7 +91,7 @@ first `SUPER_ADMIN` approves itself, simply by registering through
 ## Part 2 — logging in, and what the token actually contains
 
 ```http
-POST /auth/email/login
+POST /api/v1/auth/email/login
 { "email": "meera@example.com", "password": "herOwnChoice1", "clientId": "service-provider-app" }
 ```
 ```json
@@ -120,7 +120,7 @@ Dr. Meera's password is correct. Her account is real. She tries logging
 into the patient app anyway, just to see:
 
 ```http
-POST /auth/email/login
+POST /api/v1/auth/email/login
 { "email": "meera@example.com", "password": "herOwnChoice1", "clientId": "patient-app" }
 ```
 ```json
@@ -171,7 +171,7 @@ carrier.
 
 Whoever uses it first — the attacker — gets a normal response:
 ```http
-POST /auth/token/refresh    (attacker)   { "refreshToken": "<stolen>" }
+POST /api/v1/auth/token/refresh    (attacker)   { "refreshToken": "<stolen>" }
 ```
 ```json
 200 { "accessToken": "...", "refreshToken": "<brand-new-value>" }
@@ -180,7 +180,7 @@ POST /auth/token/refresh    (attacker)   { "refreshToken": "<stolen>" }
 That consumes the stolen value — it's now `ROTATED`. Dr. Meera's app still
 holds the old one. Her next auto-refresh:
 ```http
-POST /auth/token/refresh    (Dr. Meera, stale token)
+POST /api/v1/auth/token/refresh    (Dr. Meera, stale token)
 ```
 ```json
 403 { "error": { "code": "FORBIDDEN", "message": "Refresh token reuse detected; session revoked." } }
@@ -194,7 +194,7 @@ directly: after this, *even the attacker's supposedly fresh token* stops
 working. Dr. Meera just logs in again; the attacker is locked out entirely.
 
 If she's not sure which device was compromised, she hits **sign out
-everywhere** from her account settings — `POST /auth/logout-all` with her
+everywhere** from her account settings — `POST /api/v1/auth/logout-all` with her
 access token — and every session on every device is revoked at once
 (`200 { "revokedSessions": 4 }`). Any access token already out there keeps
 working for up to 15 more minutes (it's a stateless JWT), but nothing can be
@@ -208,12 +208,12 @@ her laptop. There's no "link my devices" step — she registered once through
 
 **On her laptop** (`patient-portal`, a web client):
 ```http
-POST /auth/email/login
+POST /api/v1/auth/email/login
 { "email": "ananya@example.com", "password": "myS3curePass", "clientId": "patient-portal" }
 ```
 ```json
 200 { "accessToken": "eyJhbGci...", "role": "PATIENT" }
-Set-Cookie: refresh_token=<opaque>; HttpOnly; Path=/auth; ...
+Set-Cookie: refresh_token=<opaque>; HttpOnly; Path=/api/v1/auth; ...
 ```
 The refresh token is an httpOnly cookie — her browser stores it where no
 JavaScript can read it, and sends it back automatically.
@@ -226,7 +226,7 @@ No cookie. The refresh token comes back **in the body**, and the app puts it
 in the iOS Keychain / Android Keystore itself — a phone has no httpOnly
 cookie, so pretending otherwise would just mean a token sitting somewhere
 worse. When the access token expires the app calls
-`POST /auth/token/refresh` with `{ "refreshToken": "<opaque>" }` in the
+`POST /api/v1/auth/token/refresh` with `{ "refreshToken": "<opaque>" }` in the
 body and gets a fresh pair back the same way. Everything *behind* that —
 the rotation, the reuse-detection from Part 5 — is byte-for-byte identical
 to the web path; only where the string is carried changes.
@@ -242,11 +242,36 @@ other.
 
 If Ananya signs up with **"Continue with Google"**, the split is the same,
 and the server enforces it: on the web (`patient-portal`) it's the
-`/auth/google/start` browser redirect; in the app (`patient-app`) it's
-`POST /auth/google/native` — the app runs Google Sign-In itself and posts
-the ID token, no browser. Point a native `clientId` at `/auth/google/start`
+`/api/v1/auth/google/start` browser redirect; in the app (`patient-app`) it's
+`POST /api/v1/auth/google/native` — the app runs Google Sign-In itself and posts
+the ID token, no browser. Point a native `clientId` at `/api/v1/auth/google/start`
 and it's rejected with `USE_NATIVE_GOOGLE`; point a web one at
-`/auth/google/native` and it's `NOT_A_NATIVE_CLIENT`.
+`/api/v1/auth/google/native` and it's `NOT_A_NATIVE_CLIENT`.
+
+And Ananya can use **both** sign-in methods on one account. If she first
+registered with a password and later taps "Continue with Google" (same
+email, and Google says the email is verified), the server attaches a Google
+identity to her existing account rather than making a second one — both
+now log her into the same place.
+
+The other way round takes one extra step. She signed up with Google, so she
+has no password. Re-registering her email is refused (`EMAIL_TAKEN`) — a
+bare registration can't prove she owns the address. Instead she taps
+**"forgot password"**: `POST /api/v1/auth/password/forgot` with her email. The
+server mints a single-use 6-digit code (valid 10 minutes), and — this is the
+part that isn't authservice's job — publishes a `PasswordResetRequested`
+event to Kafka. A separate `notification-service` picks that up and emails
+her the code. She types it in along with a new password —
+`POST /api/v1/auth/password/reset` with her email, the code, and the new
+password — and now she has a `PASSWORD` identity alongside her `GOOGLE` one.
+Same flow a user
+who genuinely forgot their password would use — the difference between
+"set my first password" and "reset my password" is invisible here.
+
+Under the hood she now has one `User` row with a `GOOGLE` and a `PASSWORD`
+identity — the `Identity` table exists precisely so an account can hold
+more than one way in. Setting the password also logged out every device she
+was signed into; she signs back in once, either way she likes.
 
 Service providers work exactly like `patient-app` here — `service-provider-app`
 is also a native client. Admin and Super Admin are web-only, on purpose:
@@ -257,7 +282,7 @@ back-office work, no mobile app.
 Ravi registers through the same service-provider app as Dr. Meera, picking
 `AMBULANCE_DRIVER`:
 ```http
-POST /auth/email/register
+POST /api/v1/auth/email/register
 { "email": "ravi@example.com", "password": "...",
   "clientId": "service-provider-app", "role": "AMBULANCE_DRIVER" }
 ```
@@ -293,7 +318,7 @@ is a few lines in `admin.service.ts` if it's ever wanted.
 And on the mobile side: a native app holds its refresh token as a plain
 string in the OS secure store — which is a real boundary on a phone, but not
 the un-readable-by-anything an httpOnly cookie gives a browser. The
-reuse-detection in Part 5, plus `POST /auth/logout-all`, are what limit the
+reuse-detection in Part 5, plus `POST /api/v1/auth/logout-all`, are what limit the
 blast radius of a stolen one. What's still missing is device-binding of
 refresh tokens (so a token lifted off one phone can't be replayed from
 another) — that's a real hardening step, not done here.

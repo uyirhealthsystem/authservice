@@ -26,7 +26,7 @@ const startSchema = z.object({
 });
 
 authGoogleRouter.get(
-  "/auth/google/start",
+  "/google/start",
   asyncHandler(async (req, res) => {
     // requireGoogleConfig() must run BEFORE anything is written to `res` -
     // an earlier version of this route set the PKCE cookie first, so the
@@ -49,7 +49,7 @@ authGoogleRouter.get(
       // endpoint instead. (Mirror of NOT_A_NATIVE_CLIENT on that endpoint.)
       throw Errors.badRequest(
         "USE_NATIVE_GOOGLE",
-        `Portal "${clientId}" is a native app client; POST the Google ID token to /auth/google/native instead.`,
+        `Portal "${clientId}" is a native app client; POST the Google ID token to /api/v1/auth/google/native instead.`,
       );
     }
     // Resolve + validate the role now, before the Google round-trip, so a
@@ -68,7 +68,7 @@ authGoogleRouter.get(
 );
 
 authGoogleRouter.get(
-  "/auth/google/callback",
+  "/google/callback",
   asyncHandler(async (req, res) => {
     const cookie = readOAuthCookie(req);
     if (!cookie) throw Errors.badRequest("MISSING_OAUTH_STATE", "OAuth flow expired or was not started here.");
@@ -128,7 +128,7 @@ const nativeSchema = z.object({
 });
 
 authGoogleRouter.post(
-  "/auth/google/native",
+  "/google/native",
   authAttemptLimiter,
   asyncHandler(async (req, res) => {
     const { idToken, clientId, role } = nativeSchema.parse(req.body);

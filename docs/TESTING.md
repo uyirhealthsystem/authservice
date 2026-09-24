@@ -12,11 +12,13 @@ drive the Express app in-process (no listening port).
 |---|---|
 | `test/portals.unit.test.ts` | pure unit — the `clientId → role` map, the whole authz model |
 | `test/health-jwks.test.ts` | `/health`, `/.well-known/jwks.json`, 404 shape, and an issued access token verified against the published JWKS |
-| `test/register.test.ts` | `/auth/email/register` — auto-approve vs pending, role rules, duplicate email, validation |
-| `test/login.test.ts` | `/auth/email/login` — cookie vs body transport, wrong password, pending/disabled, **cross-portal rejection**, shared app+web account |
-| `test/refresh.test.ts` | `/auth/token/refresh`, `/auth/logout`, `/auth/logout-all` — rotation + **reuse detection revokes the session** (both transports) |
-| `test/admin-approval.test.ts` | `/admin/users/*` — full pending→approved lifecycle, `ADMIN` cannot action another `ADMIN`, 400/404 edges |
-| `test/google-native.test.ts` | `/auth/google/native` — `verifyGoogleIdToken` stubbed, everything downstream real; account linking, pending service provider |
+| `test/register.test.ts` | `/api/v1/auth/email/register` — auto-approve vs pending, role rules, duplicate email, validation |
+| `test/login.test.ts` | `/api/v1/auth/email/login` — cookie vs body transport, wrong password, pending/disabled, **cross-portal rejection**, shared app+web account |
+| `test/refresh.test.ts` | `/api/v1/auth/token/refresh`, `/api/v1/auth/logout`, `/api/v1/auth/logout-all` — rotation + **reuse detection revokes the session** (both transports) |
+| `test/admin-approval.test.ts` | `/api/v1/auth/users/*` — full pending→approved lifecycle, `ADMIN` cannot action another `ADMIN`, 400/404 edges |
+| `test/google-native.test.ts` | `/api/v1/auth/google/native` — `verifyGoogleIdToken` stubbed, everything downstream real; account linking, pending service provider |
+| `test/link-methods.test.ts` | password → Google auto-link; a Google-first email can't be re-registered (`409 EMAIL_TAKEN`) |
+| `test/password-reset.test.ts` | `/api/v1/auth/password/forgot` + `/api/v1/auth/password/reset` — `src/lib/events.ts` mocked to capture the OTP; first-password vs replace, expired/used/sibling codes, session revocation, no-enumeration |
 | `test/rate-limit.test.ts` | the brute-force limiter actually returns `429` (own app instance, low limit) |
 
 `test/helpers.ts` has the shared `supertest` client, `resetDb()` (truncates

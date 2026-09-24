@@ -34,7 +34,7 @@ async function findOrCreateGoogleUser(
     }
   }
 
-  // Brand-new account. `requestedRole` was picked at /auth/google/start and
+  // Brand-new account. `requestedRole` was picked at /api/v1/auth/google/start and
   // already validated there; for single-role portals it's undefined and
   // resolveRegistrationRole returns the portal's one role.
   const role = resolveRegistrationRole(portal, requestedRole);
@@ -129,7 +129,7 @@ export async function completeGoogleNativeLogin(
   if (!portal.nativeApp) {
     throw Errors.badRequest(
       "NOT_A_NATIVE_CLIENT",
-      `Portal "${clientId}" is a web client; use the /auth/google/start redirect flow.`,
+      `Portal "${clientId}" is a web client; use the /api/v1/auth/google/start redirect flow.`,
     );
   }
 

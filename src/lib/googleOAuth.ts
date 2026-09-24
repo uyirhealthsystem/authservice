@@ -61,7 +61,7 @@ export async function exchangeGoogleCode(code: string, codeVerifier: string) {
 
 // Verifies a Google ID token from either flow:
 //  - the web redirect flow's token exchange (aud = GOOGLE_CLIENT_ID)
-//  - the native flow (POST /auth/google/native), where the mobile app's
+//  - the native flow (POST /api/v1/auth/google/native), where the mobile app's
 //    Google Sign-In SDK mints the token with the iOS/Android OAuth client
 //    ID as aud - hence GOOGLE_NATIVE_CLIENT_IDS is accepted too.
 // Only needs GOOGLE_CLIENT_ID set (not clientSecret / redirectUri), so the
