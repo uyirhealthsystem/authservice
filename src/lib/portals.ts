@@ -66,7 +66,7 @@ export const PORTALS: Record<string, PortalConfig> = {
   //      (one of SERVICE_PROVIDER_ROLES) and then fixed on the account.
   //      Every such account is PENDING until an admin approves it.
   "service-provider-app": {
-    clientId: "w",
+    clientId: "service-provider-app",
     name: "Service Provider App",
     roles: [...SERVICE_PROVIDER_ROLES],
     // Google is allowed, but because this portal is multi-role the OAuth
