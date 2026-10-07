@@ -16,7 +16,6 @@ import { Errors } from "./errors";
 // through patient-app and a PATIENT can't log in through service-provider-app.
 export const SERVICE_PROVIDER_ROLES = ["DOCTOR", "HOSPITAL", "LS", "AMBULANCE_DRIVER","PRO","LSC","ECG","HP","HBS"] as const;
 export type ServiceProviderRole = (typeof SERVICE_PROVIDER_ROLES)[number];
-
 export interface PortalConfig {
   clientId: string;
   name: string;
