@@ -22,7 +22,9 @@
     { "key": "superAdminPassword", "value": "Password123!" },
     { "key": "superAdminToken", "value": "" },
     { "key": "pendingUserId", "value": "" },
-    { "key": "demoProviderUserId", "value": "" }
+    { "key": "demoProviderUserId", "value": "" },
+    { "key": "patientToken", "value": "" },
+    { "key": "familyMemberId", "value": "" }
   ],
   "item": [
     {
@@ -735,6 +737,164 @@
               ] }
             }
           ]
+        }
+      ]
+    },
+    {
+      "name": "Patient — Profile & Family Members",
+      "description": "PATIENT role only - any other role's token gets 403 FORBIDDEN. `me` is always the caller; a patient only ever sees their own rows. Run in order: register + log in a patient (captures {{patientToken}}), then create the profile and manage family members. Step 5 captures {{familyMemberId}} for steps 7-8.",
+      "item": [
+        {
+          "name": "1. Register a patient (self-activates)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{demoPatientEmail}}\",\n  \"password\": \"{{demoPassword}}\",\n  \"clientId\": \"patient-app\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/register", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "register"] },
+            "description": "Patient accounts are ACTIVE immediately. 409 on re-run is fine."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 201 or 409', () => pm.expect([201,409]).to.include(pm.response.code));"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "2. Login as the patient (capture token)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{demoPatientEmail}}\",\n  \"password\": \"{{demoPassword}}\",\n  \"clientId\": \"patient-app\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/email/login", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "email", "login"] },
+            "description": "Saves the access token to {{patientToken}} for the steps below."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                "if (pm.response.code !== 200) return;",
+                "pm.collectionVariables.set('patientToken', pm.response.json().accessToken);"
+              ] }
+            }
+          ]
+        },
+        {
+          "name": "3. Create / replace profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 200 or 201', () => pm.expect([200, 201]).to.include(pm.response.code));"
+              ] }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Authorization", "value": "Bearer {{patientToken}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"fullName\": \"Ravi Kumar\",\n  \"dateOfBirth\": \"1990-05-14\",\n  \"gender\": \"MALE\",\n  \"phone\": \"9876543210\",\n  \"bloodGroup\": \"O+\",\n  \"address\": \"12, Anna Nagar\",\n  \"district\": \"Chennai\",\n  \"pinCode\": \"600040\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/patients/me/profile", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "patients", "me", "profile"] },
+            "description": "Creates the caller's profile (`201`) or replaces it (`200`) — optional fields left out are cleared. Only `fullName` is required. `{ profile: { … } }`.\n\n`gender`: MALE | FEMALE | OTHER. `bloodGroup`: A+ A- B+ B- AB+ AB- O+ O-. `pinCode`: 6-digit Indian PIN as a string (e.g. \"600040\"). `dateOfBirth`: YYYY-MM-DD.\n\nErrors: `NOT_AUTHENTICATED` (401), `FORBIDDEN` (403, not a PATIENT token), `VALIDATION_ERROR` (400)."
+          },
+          "response": []
+        },
+        {
+          "name": "4. Get profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 200', () => pm.response.to.have.status(200));"
+              ] }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{patientToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/patients/me/profile", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "patients", "me", "profile"] },
+            "description": "`200 { profile: { id, fullName, dateOfBirth, gender, phone, bloodGroup, address, district, pinCode, createdAt, updatedAt } }`.\n\nErrors: `NOT_FOUND` (404, profile not created yet), `NOT_AUTHENTICATED` (401), `FORBIDDEN` (403)."
+          },
+          "response": []
+        },
+        {
+          "name": "5. Add family member",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                "if (pm.response.code !== 201) return;",
+                "pm.collectionVariables.set('familyMemberId', pm.response.json().familyMember.id);"
+              ] }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{patientToken}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"fullName\": \"Lakshmi\",\n  \"relationship\": \"MOTHER\",\n  \"dateOfBirth\": \"1962-01-02\",\n  \"gender\": \"FEMALE\",\n  \"phone\": \"9876500000\",\n  \"bloodGroup\": \"B+\",\n  \"district\": \"Madurai\",\n  \"pinCode\": \"625001\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/patients/me/family-members", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "patients", "me", "family-members"] },
+            "description": "`fullName` and `relationship` are required. `201 { familyMember: { … } }`. Saves the new id to `{{familyMemberId}}`.\n\n`relationship`: SPOUSE FATHER MOTHER SON DAUGHTER BROTHER SISTER GRANDPARENT GRANDCHILD OTHER. `gender`: MALE | FEMALE | OTHER. `bloodGroup`: A+ A- B+ B- AB+ AB- O+ O-. `pinCode`: 6-digit Indian PIN as a string (e.g. \"600040\"). `dateOfBirth`: YYYY-MM-DD.\n\nErrors: `NOT_AUTHENTICATED` (401), `FORBIDDEN` (403), `VALIDATION_ERROR` (400)."
+          },
+          "response": []
+        },
+        {
+          "name": "6. List family members",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                "pm.test('returns a familyMembers array', () => pm.expect(pm.response.json().familyMembers).to.be.an('array'));"
+              ] }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{patientToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/patients/me/family-members", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "patients", "me", "family-members"] },
+            "description": "The caller's own family members, oldest first. `200 { familyMembers: [ … ] }`."
+          },
+          "response": []
+        },
+        {
+          "name": "7. Update family member",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 200', () => pm.response.to.have.status(200));"
+              ] }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{patientToken}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"bloodGroup\": \"B-\",\n  \"pinCode\": \"625002\"\n}" },
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/patients/me/family-members/{{familyMemberId}}", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "patients", "me", "family-members", "{{familyMemberId}}"] },
+            "description": "Any subset of the POST fields; fields left out are unchanged. `200 { familyMember: { … } }`.\n\nErrors: `NOT_FOUND` (404, no such member on *your* account), `VALIDATION_ERROR` (400)."
+          },
+          "response": []
+        },
+        {
+          "name": "8. Delete family member",
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": [
+                "pm.test('status is 204', () => pm.response.to.have.status(204));"
+              ] }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{patientToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/v1/auth/patients/me/family-members/{{familyMemberId}}", "host": ["{{baseUrl}}"], "path": ["api", "v1", "auth", "patients", "me", "family-members", "{{familyMemberId}}"] },
+            "description": "`204`, no body.\n\nErrors: `NOT_FOUND` (404, no such member on *your* account)."
+          },
+          "response": []
         }
       ]
     },

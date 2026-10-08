@@ -345,3 +345,59 @@ Flips a `PENDING` account to `ACTIVE` and stamps `approvedAt` / `approvedById`.
 ### `POST /api/v1/auth/users/:id/reject`
 Flips a `PENDING` account to `DISABLED`. Same errors as `approve`.
 - `200 { "user": <user> }`
+
+---
+
+## Patient — profile & family members
+
+All routes require `Authorization: Bearer <accessToken>` where the token's
+`role` is `PATIENT` (log in through `patient-app` / `patient-portal`). `me`
+is always the caller — a patient only ever sees their own rows.
+
+- `401 NOT_AUTHENTICATED` — missing / invalid / expired access token.
+- `403 FORBIDDEN` — token role is not `PATIENT`.
+- `400 VALIDATION_ERROR` — bad body / id.
+
+Field values:
+- `dateOfBirth` — `"YYYY-MM-DD"`, not in the future.
+- `gender` — `MALE` | `FEMALE` | `OTHER`
+- `bloodGroup` — `A+` `A-` `B+` `B-` `AB+` `AB-` `O+` `O-`
+- `pinCode` — 6-digit Indian PIN code, e.g. `"600001"` (string).
+- `relationship` — `SPOUSE` `FATHER` `MOTHER` `SON` `DAUGHTER` `BROTHER`
+  `SISTER` `GRANDPARENT` `GRANDCHILD` `OTHER`
+
+### `GET /api/v1/auth/patients/me/profile`
+- `200 { "profile": { "id", "fullName", "dateOfBirth", "gender", "phone", "bloodGroup", "address", "district", "pinCode", "createdAt", "updatedAt" } }`
+- `404 NOT_FOUND` — profile not created yet.
+
+### `PUT /api/v1/auth/patients/me/profile`
+Creates the profile, or replaces it (optional fields left out are cleared).
+```json
+{ "fullName": "Ravi Kumar", "dateOfBirth": "1990-05-14", "gender": "MALE",
+  "phone": "9876543210", "bloodGroup": "O+", "address": "12, Anna Nagar",
+  "district": "Chennai", "pinCode": "600040" }
+```
+Only `fullName` is required.
+- `201 { "profile": ... }` — created.
+- `200 { "profile": ... }` — replaced.
+
+### `GET /api/v1/auth/patients/me/family-members`
+- `200 { "familyMembers": [ { "id", "fullName", "relationship", "dateOfBirth", "gender", "phone", "bloodGroup", "district", "pinCode", "createdAt", "updatedAt" }, ... ] }`
+
+### `POST /api/v1/auth/patients/me/family-members`
+```json
+{ "fullName": "Lakshmi", "relationship": "MOTHER", "dateOfBirth": "1962-01-02",
+  "gender": "FEMALE", "phone": "9876500000", "bloodGroup": "B+",
+  "district": "Madurai", "pinCode": "625001" }
+```
+`fullName` and `relationship` are required.
+- `201 { "familyMember": ... }`
+
+### `PATCH /api/v1/auth/patients/me/family-members/:id`
+Any subset of the POST fields.
+- `200 { "familyMember": ... }`
+- `404 NOT_FOUND` — no such member on *your* account.
+
+### `DELETE /api/v1/auth/patients/me/family-members/:id`
+- `204`
+- `404 NOT_FOUND` — no such member on *your* account.

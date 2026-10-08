@@ -30,6 +30,8 @@ model User {
   identities          Identity[]
   sessions            Session[]
   passwordResetTokens PasswordResetToken[]
+  patientProfile      PatientProfile?
+  familyMembers       FamilyMember[]
 
   @@map("users")
 }
@@ -38,6 +40,51 @@ enum UserStatus {
   PENDING
   ACTIVE
   DISABLED
+}
+
+// PATIENT-only. One profile per patient account (userId is unique). The
+// PATIENT-only rule is enforced by the API (requireAuth("PATIENT") in
+// src/modules/patient), not the database - role is a plain string on users.
+// gender / bloodGroup are validated by the zod schemas, stored as strings.
+model PatientProfile {
+  id          String    @id @default(uuid())
+  userId      String    @unique
+  fullName    String
+  dateOfBirth DateTime? @db.Date
+  gender      String?
+  phone       String?
+  bloodGroup  String?
+  address     String?
+  district    String?
+  pinCode     String? // 6-digit Indian PIN, kept as text (leading zeros / not arithmetic)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("patient_profiles")
+}
+
+// PATIENT-only. Family members a patient records under their own account
+// (many per patient). They are records, not accounts - they cannot log in.
+model FamilyMember {
+  id           String    @id @default(uuid())
+  userId       String // the owning PATIENT
+  fullName     String
+  relationship String
+  dateOfBirth  DateTime? @db.Date
+  gender       String?
+  phone        String?
+  bloodGroup   String?
+  district     String?
+  pinCode      String? // 6-digit Indian PIN, kept as text
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("family_members")
 }
 
 // One row per login method a user has enrolled - lets one account hold both
