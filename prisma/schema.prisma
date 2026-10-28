@@ -42,6 +42,14 @@ enum UserStatus {
   DISABLED
 }
 
+// ── LEGACY - moving to userservice ──────────────────────────────────────────
+// PatientProfile and FamilyMember now live in userservice (../userservice),
+// which serves them at /api/v1/users/me/...; nothing in authservice reads or
+// writes these tables any more. They stay only until userservice's
+// `npm run import:authservice` has copied them across and verified every id.
+// After that, delete both models (and the two relation fields on User) and
+// create the drop migration with `npm run prisma:migrate`.
+//
 // PATIENT-only. One profile per patient account (userId is unique). The
 // PATIENT-only rule is enforced by the API (requireAuth("PATIENT") in
 // src/modules/patient), not the database - role is a plain string on users.

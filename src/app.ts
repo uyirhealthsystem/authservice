@@ -12,7 +12,6 @@ import { authEmailRouter } from "./modules/auth-email/auth-email.routes";
 import { authPasswordRouter } from "./modules/auth-password/auth-password.routes";
 import { authGoogleRouter } from "./modules/auth-google/auth-google.routes";
 import { adminRouter, legacyAdminRouter } from "./modules/admin/admin.routes";
-import { patientRouter } from "./modules/patient/patient.routes";
 
 export const app = express();
 
@@ -42,7 +41,7 @@ const deprecated: RequestHandler = (_req, res, next) => {
 };
 
 const authApi = Router();
-authApi.use(authEmailRouter, authPasswordRouter, authGoogleRouter, adminRouter, patientRouter);
+authApi.use(authEmailRouter, authPasswordRouter, authGoogleRouter, adminRouter);
 app.use(AUTH_API_PREFIX, cookieBase(AUTH_API_PREFIX), authApi);
 
 // Legacy aliases - same handlers, old paths. Remove once every client has

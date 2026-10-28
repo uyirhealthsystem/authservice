@@ -27,7 +27,12 @@ async function getProducer(): Promise<Producer | undefined> {
   }
   if (producer) return producer;
   if (!connecting) {
-    kafka ??= new Kafka({ clientId: env.kafka.clientId, brokers: env.kafka.brokers });
+    kafka ??= new Kafka({
+      clientId: env.kafka.clientId,
+      brokers: env.kafka.brokers,
+      ssl: env.kafka.ssl || undefined,
+      sasl: env.kafka.sasl,
+    });
     // Pin the partitioner so kafkajs doesn't log its v2 migration warning;
     // same-key messages (key = userId) still land on one partition.
     const p = kafka.producer({ createPartitioner: Partitioners.DefaultPartitioner });

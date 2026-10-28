@@ -1,0 +1,691 @@
+{
+  "info": {
+    "name": "authservice - Seed test accounts",
+    "description": "Run this folder in the Collection Runner (or `postman collection run <file> -i \"Seed test accounts (one-click)\"`)\nto create and approve one account per role. Every account uses the password in `{{seedPassword}}`.\n\n| Role | Email | clientId |\n|---|---|---|\n| SUPER_ADMIN | superadmin@uyir.test | superadmin-portal |\n| ADMIN | admin@uyir.test | admin-portal |\n| PATIENT | patient@uyir.test | patient-app |\n| DOCTOR | doctor@uyir.test | service-provider-app |\n| HOSPITAL | hospital@uyir.test | service-provider-app |\n| LS | ls@uyir.test | service-provider-app |\n| AMBULANCE_DRIVER | ambulance-driver@uyir.test | service-provider-app |\n| PRO | pro@uyir.test | service-provider-app |\n| LSC | lsc@uyir.test | service-provider-app |\n| ECG | ecg@uyir.test | service-provider-app |\n| HP | hp@uyir.test | service-provider-app |\n| HBC | hbc@uyir.test | service-provider-app |\n\nSafe to re-run: existing accounts return 409 (counted as OK) and only PENDING `@uyir.test` accounts get approved.\nApproving is done by the Super Admin, so nobody else's pending account is touched.\n\nThe run makes 13 calls to the auth rate limiter (12 registers + 1 login). The default limit is\n20 per 15 minutes per IP, so a second run straight after the first will get 429s - wait, or\nstart the server with a higher `AUTH_RATE_LIMIT_MAX`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000"
+    },
+    {
+      "key": "seedPassword",
+      "value": "Uyir@12345"
+    },
+    {
+      "key": "seedSuperAdminToken",
+      "value": ""
+    },
+    {
+      "key": "seedPendingIds",
+      "value": ""
+    },
+    {
+      "key": "seedApproveId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Register Super Admin",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// 201 = created now, 409 = already exists from an earlier run. Both are fine.",
+              "pm.test(\"account exists (201 created or 409 already registered)\", () => {",
+              "  pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"superadmin@uyir.test\",\n  \"password\": \"{{seedPassword}}\",\n  \"clientId\": \"superadmin-portal\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/email/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "email",
+            "register"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Register Admin",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// 201 = created now, 409 = already exists from an earlier run. Both are fine.",
+              "pm.test(\"account exists (201 created or 409 already registered)\", () => {",
+              "  pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"admin@uyir.test\",\n  \"password\": \"{{seedPassword}}\",\n  \"clientId\": \"admin-portal\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/email/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "email",
+            "register"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Register Patient",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// 201 = created now, 409 = already exists from an earlier run. Both are fine.",
+              "pm.test(\"account exists (201 created or 409 already registered)\", () => {",
+              "  pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"patient@uyir.test\",\n  \"password\": \"{{seedPassword}}\",\n  \"clientId\": \"patient-app\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/email/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "email",
+            "register"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Register DOCTOR",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// 201 = created now, 409 = already exists from an earlier run. Both are fine.",
+              "pm.test(\"account exists (201 created or 409 already registered)\", () => {",
+              "  pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"doctor@uyir.test\",\n  \"password\": \"{{seedPassword}}\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"DOCTOR\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/email/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "email",
+            "register"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Register HOSPITAL",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// 201 = created now, 409 = already exists from an earlier run. Both are fine.",
+              "pm.test(\"account exists (201 created or 409 already registered)\", () => {",
+              "  pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"hospital@uyir.test\",\n  \"password\": \"{{seedPassword}}\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"HOSPITAL\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/email/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "email",
+            "register"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Register LS",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// 201 = created now, 409 = already exists from an earlier run. Both are fine.",
+              "pm.test(\"account exists (201 created or 409 already registered)\", () => {",
+              "  pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"ls@uyir.test\",\n  \"password\": \"{{seedPassword}}\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"LS\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/email/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "email",
+            "register"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Register AMBULANCE_DRIVER",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// 201 = created now, 409 = already exists from an earlier run. Both are fine.",
+              "pm.test(\"account exists (201 created or 409 already registered)\", () => {",
+              "  pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"ambulance-driver@uyir.test\",\n  \"password\": \"{{seedPassword}}\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"AMBULANCE_DRIVER\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/email/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "email",
+            "register"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Register PRO",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// 201 = created now, 409 = already exists from an earlier run. Both are fine.",
+              "pm.test(\"account exists (201 created or 409 already registered)\", () => {",
+              "  pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"pro@uyir.test\",\n  \"password\": \"{{seedPassword}}\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"PRO\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/email/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "email",
+            "register"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Register LSC",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// 201 = created now, 409 = already exists from an earlier run. Both are fine.",
+              "pm.test(\"account exists (201 created or 409 already registered)\", () => {",
+              "  pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"lsc@uyir.test\",\n  \"password\": \"{{seedPassword}}\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"LSC\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/email/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "email",
+            "register"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Register ECG",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// 201 = created now, 409 = already exists from an earlier run. Both are fine.",
+              "pm.test(\"account exists (201 created or 409 already registered)\", () => {",
+              "  pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"ecg@uyir.test\",\n  \"password\": \"{{seedPassword}}\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"ECG\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/email/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "email",
+            "register"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Register HP",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// 201 = created now, 409 = already exists from an earlier run. Both are fine.",
+              "pm.test(\"account exists (201 created or 409 already registered)\", () => {",
+              "  pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"hp@uyir.test\",\n  \"password\": \"{{seedPassword}}\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"HP\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/email/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "email",
+            "register"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Register HBC",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// 201 = created now, 409 = already exists from an earlier run. Both are fine.",
+              "pm.test(\"account exists (201 created or 409 already registered)\", () => {",
+              "  pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"hbc@uyir.test\",\n  \"password\": \"{{seedPassword}}\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"HBC\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/email/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "email",
+            "register"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Login Super Admin (seed)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+              "pm.collectionVariables.set(\"seedSuperAdminToken\", pm.response.json().accessToken);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"superadmin@uyir.test\",\n  \"password\": \"{{seedPassword}}\",\n  \"clientId\": \"superadmin-portal\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/email/login",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "email",
+            "login"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List pending seed accounts",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+              "// Only our own test accounts - never approve anyone else's pending signup.",
+              "const ids = pm.response.json().users",
+              "  .filter((u) => /@uyir\\.test$/.test(u.email))",
+              "  .map((u) => u.id);",
+              "pm.collectionVariables.set(\"seedPendingIds\", JSON.stringify(ids));",
+              "console.log(`seed: ${ids.length} pending @uyir.test account(s) to approve`);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{seedSuperAdminToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/users?status=PENDING",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "users"
+          ],
+          "query": [
+            {
+              "key": "status",
+              "value": "PENDING"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Approve pending seed accounts (loops)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// Takes the next id off the list; the test script re-runs this request until it is empty.",
+              "const ids = JSON.parse(pm.collectionVariables.get(\"seedPendingIds\") || \"[]\");",
+              "if (ids.length === 0) {",
+              "  console.log(\"seed: nothing pending, skipping approve\");",
+              "  pm.execution.skipRequest();",
+              "} else {",
+              "  pm.collectionVariables.set(\"seedApproveId\", ids.shift());",
+              "  pm.collectionVariables.set(\"seedPendingIds\", JSON.stringify(ids));",
+              "}"
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"approved\", () => pm.response.to.have.status(200));",
+              "const left = JSON.parse(pm.collectionVariables.get(\"seedPendingIds\") || \"[]\");",
+              "if (left.length > 0) pm.execution.setNextRequest(pm.info.requestName);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{seedSuperAdminToken}}"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/users/{{seedApproveId}}/approve",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "users",
+            "{{seedApproveId}}",
+            "approve"
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { parseKafkaSettings } from "./kafkaConfig";
 
 function required(name: string): string {
   const value = process.env[name];
@@ -22,14 +23,9 @@ export const env = {
   // boots and serves every other path with zero Kafka setup. When brokers are
   // unset the producer is a no-op (a warning is logged) and /api/v1/auth/password/forgot
   // still returns 202 - the reset email just isn't dispatched until Kafka +
-  // the notification service are up. See src/lib/kafka.ts.
-  kafka: {
-    brokers: (process.env.KAFKA_BROKERS ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-    clientId: optional("KAFKA_CLIENT_ID", "authservice"),
-  },
+  // the notification service are up. See src/lib/kafka.ts. TLS / SASL for a
+  // managed cluster: see src/lib/kafkaConfig.ts.
+  kafka: parseKafkaSettings(process.env),
 
   // Brute-force guard on register / login / google-native. Defaults match the
   // original hard-coded values; overridable so tests (and a future shared

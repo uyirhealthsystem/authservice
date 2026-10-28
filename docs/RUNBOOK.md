@@ -37,17 +37,16 @@ setup — but with Kafka unconfigured, `forgot` returns `202` without an email
 actually being sent. To exercise the whole path locally:
 
 ```bash
-# shared Kafka (repo root) - creates the auth.events topic
-docker compose -f ../docker-compose.kafka.yml up -d
+# shared Kafka broker: 15.252.96.97:9094 (the auth.events topic must exist on it)
 
 # fake SMTP inbox at http://localhost:8025
 docker compose -f ../notification-service/docker-compose.yml up -d
 
 # authservice .env:
-#   KAFKA_BROKERS=localhost:9092
+#   KAFKA_BROKERS=15.252.96.97:9094
 
 # then run the notification service (see ../notification-service/README.md):
-#   .env: KAFKA_BROKERS=localhost:9092  SMTP_HOST=localhost  SMTP_PORT=1025
+#   .env: KAFKA_BROKERS=15.252.96.97:9094  SMTP_HOST=localhost  SMTP_PORT=1025
 cd ../notification-service && npm run dev
 ```
 
@@ -85,6 +84,9 @@ can approve service-provider accounts only.
 | `GOOGLE_NATIVE_CLIENT_IDS` | no | comma-separated iOS/Android OAuth client IDs, accepted as the `aud` of an ID token on `/api/v1/auth/google/native` |
 | `KAFKA_BROKERS` | no | comma-separated brokers. Unset ⇒ the domain-event producer is a no-op: `/api/v1/auth/password/forgot` still returns `202` but no reset email is dispatched |
 | `KAFKA_CLIENT_ID` | no (`authservice`) | |
+| `KAFKA_SSL` | no (`false`) | `true` for a TLS listener (MSK, Confluent Cloud, Aiven) |
+| `KAFKA_SASL_MECHANISM` | no | `plain`, `scram-sha-256` or `scram-sha-512`; unknown value or missing credentials fails at boot |
+| `KAFKA_SASL_USERNAME` / `KAFKA_SASL_PASSWORD` | with a mechanism | |
 
 ## Moving to `/api/v1/auth` (and retiring the legacy paths)
 

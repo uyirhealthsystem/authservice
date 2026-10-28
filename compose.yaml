@@ -1,0 +1,25 @@
+
+services:
+  auth-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: uyir/auth-service:local
+    restart: unless-stopped
+    init: true
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      DATABASE_URL: ${DATABASE_URL:?Set DATABASE_URL in .env}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-15.252.96.97:9094}
+      KAFKA_CLIENT_ID: ${KAFKA_CLIENT_ID:-authservice}
+    ports:
+      - "127.0.0.1:4000:4000"
+    networks:
+      - default
+      - uyir-backend
+
+networks:
+  uyir-backend:
+    external: true
+    name: uyir-backend
