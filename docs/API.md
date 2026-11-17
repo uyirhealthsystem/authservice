@@ -346,11 +346,3 @@ Flips a `PENDING` account to `ACTIVE` and stamps `approvedAt` / `approvedById`.
 Flips a `PENDING` account to `DISABLED`. Same errors as `approve`.
 - `200 { "user": <user> }`
 
----
-
-## Patient — profile & family members
-
-Moved to **userservice** (`../userservice`) — patient profile, family
-members and medical records live there now, under `/api/v1/users/me/...`.
-Through the gateway the old `/api/v1/auth/patients/me/*` paths are
-rewritten onto userservice (deprecated); authservice no longer serves them.

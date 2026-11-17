@@ -23,8 +23,7 @@
     { "key": "superAdminToken", "value": "" },
     { "key": "pendingUserId", "value": "" },
     { "key": "demoProviderUserId", "value": "" },
-    { "key": "patientToken", "value": "" },
-    { "key": "familyMemberId", "value": "" }
+    { "key": "patientToken", "value": "" }
   ],
   "item": [
     {

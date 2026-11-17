@@ -15,8 +15,7 @@
     { "key": "refreshToken", "value": "" },
     { "key": "adminAccessToken", "value": "" },
     { "key": "googleRedirectUri", "value": "http://localhost:5173/oauth/callback" },
-    { "key": "userId", "value": "" },
-    { "key": "familyMemberId", "value": "" }
+    { "key": "userId", "value": "" }
   ],
   "event": [
     {
