@@ -267,6 +267,18 @@ Current events:
 | eventType | when | consumer |
 |---|---|---|
 | `PasswordResetRequested` (v1) | `POST /api/v1/auth/password/forgot` for a real, eligible account | `notification-service` → sends the reset email |
+| `LoginOtpRequested` (v1) | `POST /api/v1/auth/email/login` (correct password) and `/email/login/resend` | `notification-service` → emails the 6-digit sign-in code |
+| `UserLoggedIn` (v1) | every successful login (email/password after the code is verified, or Google, any portal) that has an email; not on token refresh | `notification-service` → sends a "new sign-in" alert email |
+
+`data` for `LoginOtpRequested`: `{ userId, email, otp, expiresAt, portalName, ip, userAgent }`.
+Unlike the other events this one is **not** fire-and-forget: the user can't
+finish logging in without the email, so a failed publish turns into
+`503 SERVICE_UNAVAILABLE` and the challenge is discarded. `otp` is a live
+credential, protected the same way as the reset code below (1-hour topic
+retention, redacted before dead-lettering, 5-minute code TTL).
+
+`data` for `UserLoggedIn`: `{ userId, email, role, portalId, portalName, method ("PASSWORD" | "GOOGLE"), ip, userAgent, loggedInAt }`.
+It is fire-and-forget: login never waits on or fails because of Kafka.
 
 `data` for `PasswordResetRequested`: `{ userId, email, otp, expiresAt }`.
 `otp` is the raw 6-digit code. Because that code is a live credential, the

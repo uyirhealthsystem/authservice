@@ -21,5 +21,20 @@ export const Errors = {
   notFound: (what: string) => new AppError(404, "NOT_FOUND", `${what} not found.`),
   conflict: (code: string, msg: string) => new AppError(409, "CONFLICT_" + code, msg),
   badRequest: (code: string, msg: string) => new AppError(400, code, msg),
+  invalidLoginCode: (attemptsRemaining: number) =>
+    new AppError(
+      400,
+      "INVALID_LOGIN_CODE",
+      attemptsRemaining > 0
+        ? `That code is incorrect. ${attemptsRemaining} attempt${attemptsRemaining === 1 ? "" : "s"} left.`
+        : "That code is incorrect. Too many wrong attempts - please log in again.",
+    ),
+  loginChallengeInvalid: () =>
+    new AppError(
+      400,
+      "LOGIN_CHALLENGE_INVALID",
+      "This sign-in request has expired or is no longer valid. Please log in again.",
+    ),
+  tooManyRequests: (code: string, msg: string) => new AppError(429, code, msg),
   serviceUnavailable: (msg: string) => new AppError(503, "SERVICE_UNAVAILABLE", msg),
 };

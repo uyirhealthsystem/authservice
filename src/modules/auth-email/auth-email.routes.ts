@@ -1,7 +1,15 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { asyncHandler } from "../../lib/asyncHandler";
-import { registerSchema, loginSchema, refreshSchema, logoutSchema } from "./auth-email.schemas";
+import {
+  registerSchema,
+  loginSchema,
+  loginVerifySchema,
+  loginResendSchema,
+  refreshSchema,
+  logoutSchema,
+} from "./auth-email.schemas";
 import { registerWithEmail, loginWithEmail } from "./auth-email.service";
+import { verifyLoginChallenge, resendLoginChallenge } from "./login-otp.service";
 import {
   rotateRefreshToken,
   revokeSessionByRefreshToken,
@@ -10,7 +18,7 @@ import {
 import { setRefreshCookie, clearRefreshCookie } from "../../lib/refreshCookie";
 import { deliverRefreshToken, readPresentedRefreshToken } from "../auth-shared/refreshTokenDelivery";
 import { Errors } from "../../lib/errors";
-import { authAttemptLimiter } from "../../middleware/rateLimit";
+import { authAttemptLimiter, otpAttemptLimiter } from "../../middleware/rateLimit";
 import { requireAuth } from "../../middleware/authGuard";
 
 export const authEmailRouter = Router();
@@ -33,18 +41,46 @@ authEmailRouter.post(
   }),
 );
 
+const requestMeta = (req: Request) => ({ userAgent: req.headers["user-agent"], ip: req.ip });
+
+// Step 1. Correct password -> 202 { otpRequired: true, challengeId, ... } and a
+// code is emailed. (LOGIN_OTP_ENABLED=false -> 200 with tokens, as before OTP.)
 authEmailRouter.post(
   "/email/login",
   authAttemptLimiter,
   asyncHandler(async (req, res) => {
     const { email, password, clientId } = loginSchema.parse(req.body);
-    const result = await loginWithEmail(email, password, clientId, {
-      userAgent: req.headers["user-agent"],
-      ip: req.ip,
-    });
+    const result = await loginWithEmail(email, password, clientId, requestMeta(req));
+    if (result.kind === "otp") {
+      res.status(202).json(result.challenge);
+      return;
+    }
     // Web portal -> httpOnly cookie. Native app -> refreshToken in the body.
     const body = deliverRefreshToken(res, result.portal, result.refreshToken, result.refreshTokenTtlDays);
     res.status(200).json({ accessToken: result.accessToken, role: result.role, ...body });
+  }),
+);
+
+// Step 2. challengeId + emailed code -> tokens (same response shape as a
+// direct login: cookie for web portals, refreshToken in the body for apps).
+authEmailRouter.post(
+  "/email/login/verify",
+  otpAttemptLimiter,
+  asyncHandler(async (req, res) => {
+    const { challengeId, otp, clientId } = loginVerifySchema.parse(req.body);
+    const result = await verifyLoginChallenge(challengeId, otp, clientId, requestMeta(req));
+    const body = deliverRefreshToken(res, result.portal, result.refreshToken, result.refreshTokenTtlDays);
+    res.status(200).json({ accessToken: result.accessToken, role: result.role, ...body });
+  }),
+);
+
+// Email a fresh code for the same challenge (cooldown and send caps apply).
+authEmailRouter.post(
+  "/email/login/resend",
+  otpAttemptLimiter,
+  asyncHandler(async (req, res) => {
+    const { challengeId, clientId } = loginResendSchema.parse(req.body);
+    res.status(202).json(await resendLoginChallenge(challengeId, clientId, requestMeta(req)));
   }),
 );
 

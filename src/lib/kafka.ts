@@ -61,6 +61,19 @@ export async function publishEvent(topic: string, key: string, value: unknown): 
   }
 }
 
+// For events the request can't succeed without (the login OTP email): same
+// producer, but failure is reported instead of swallowed. Returns false when
+// Kafka isn't configured at all, so the caller decides what that means.
+export async function publishEventOrThrow(topic: string, key: string, value: unknown): Promise<boolean> {
+  const p = await getProducer();
+  if (!p) {
+    if (configured) throw new Error("kafka producer is not connected");
+    return false;
+  }
+  await p.send({ topic, messages: [{ key, value: JSON.stringify(value) }] });
+  return true;
+}
+
 export async function disconnectKafka(): Promise<void> {
   if (producer) {
     await producer.disconnect().catch((err) => logger.error({ err }, "error disconnecting kafka producer"));

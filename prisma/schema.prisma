@@ -30,6 +30,7 @@ model User {
   identities          Identity[]
   sessions            Session[]
   passwordResetTokens PasswordResetToken[]
+  loginChallenges     LoginChallenge[]
 
   @@map("users")
 }
@@ -143,4 +144,31 @@ enum RefreshTokenStatus {
   ACTIVE
   ROTATED
   REVOKED
+}
+
+// Second step of email/password login. After the password checks out, a
+// challenge is created and a 6-digit code is emailed (LoginOtpRequested event
+// -> notification-service). The client then redeems challengeId + code at
+// POST /api/v1/auth/email/login/verify to get its tokens. Only the code's
+// SHA-256 hash is stored. A challenge is bound to the portal it was started
+// on, single-use (consumedAt), short-lived (expiresAt), and capped on wrong
+// guesses (attempts) and on emails sent (sendCount, bumped by /resend).
+model LoginChallenge {
+  id         String    @id @default(uuid())
+  userId     String
+  portalId   String
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  sendCount  Int       @default(1)
+  lastSentAt DateTime  @default(now())
+  consumedAt DateTime?
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("login_challenges")
 }

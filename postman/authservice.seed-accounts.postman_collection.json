@@ -24,6 +24,14 @@
     {
       "key": "seedApproveId",
       "value": ""
+    },
+    {
+      "key": "loginChallengeId",
+      "value": ""
+    },
+    {
+      "key": "loginOtp",
+      "value": ""
     }
   ],
   "item": [
@@ -551,6 +559,14 @@
           "script": {
             "type": "text/javascript",
             "exec": [
+              "// Login OTP: a correct password returns 202 and emails a 6-digit code.",
+              "// Put that code in the {{loginOtp}} variable, then send the next request (Verify login code).",
+              "if (pm.response.code === 202) {",
+              "  const ch = pm.response.json();",
+              "  pm.collectionVariables.set('loginChallengeId', ch.challengeId);",
+              "  pm.test('sign-in code emailed to ' + ch.email + ' - set {{loginOtp}} and run Verify', () => pm.expect(ch.otpRequired).to.eql(true));",
+              "  return;",
+              "}",
               "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
               "pm.collectionVariables.set(\"seedSuperAdminToken\", pm.response.json().accessToken);"
             ]
@@ -583,6 +599,37 @@
           ]
         }
       }
+    },
+    {
+      "name": "↳ Verify login code (Login Super Admin (seed))",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"200 OK\", () => pm.response.to.have.status(200));",
+              "pm.collectionVariables.set(\"seedSuperAdminToken\", pm.response.json().accessToken);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"challengeId\": \"{{loginChallengeId}}\",\n  \"otp\": \"{{loginOtp}}\",\n  \"clientId\": \"superadmin-portal\"\n}"
+        },
+        "url": "{{baseUrl}}/api/v1/auth/email/login/verify",
+        "description": "Second step of email/password login. `otp` is the 6-digit code emailed after the password step (set `{{loginOtp}}`). Returns the same `200 { accessToken, role }` (+ `refreshToken` for native apps / cookie for web) the login used to return.\n\nErrors: `INVALID_LOGIN_CODE` (400, wrong code - message says attempts left; locked after 5), `LOGIN_CHALLENGE_INVALID` (400, expired / used / other portal - log in again), `ACCOUNT_DISABLED` (403), `RATE_LIMITED` (429)."
+      },
+      "response": []
     },
     {
       "name": "List pending seed accounts",

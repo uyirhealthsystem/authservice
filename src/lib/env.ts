@@ -35,6 +35,23 @@ export const env = {
     windowMs: Number(optional("AUTH_RATE_LIMIT_WINDOW_MS", String(15 * 60 * 1000))),
   },
 
+  // Email OTP as the second step of email/password login (every portal). On
+  // by default. LOGIN_OTP_ENABLED=false is an operational kill switch (e.g.
+  // the mail provider is down): login then issues tokens straight after the
+  // password check, as it did before OTP existed. Google login never asks for
+  // a code - Google has already proven the user owns the address.
+  loginOtp: {
+    enabled: optional("LOGIN_OTP_ENABLED", "true").toLowerCase() !== "false",
+    ttlMin: Number(optional("LOGIN_OTP_TTL_MIN", "5")),
+    maxAttempts: Number(optional("LOGIN_OTP_MAX_ATTEMPTS", "5")),
+    resendCooldownSec: Number(optional("LOGIN_OTP_RESEND_COOLDOWN_SEC", "30")),
+    maxSendsPerChallenge: Number(optional("LOGIN_OTP_MAX_SENDS_PER_CHALLENGE", "4")),
+    // Caps codes emailed to one account per window, across all challenges -
+    // stops someone who knows the password from mail-bombing the owner.
+    maxSendsPerUserWindow: Number(optional("LOGIN_OTP_MAX_SENDS_PER_USER", "10")),
+    userWindowMin: Number(optional("LOGIN_OTP_USER_WINDOW_MIN", "15")),
+  },
+
   // Google OAuth is intentionally NOT required() - the service must boot and
   // serve every other login method with zero Google setup. Routes that need
   // it call requireGoogleConfig() lazily and 503 if it's missing.

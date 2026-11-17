@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { api, register, resetDb, uniqueEmail, PASSWORD, activeUserAccessToken } from "./helpers";
+import { api, register, resetDb, uniqueEmail, PASSWORD, activeUserAccessToken, completeLogin } from "./helpers";
 
 // The pre-/api/v1 paths are kept as aliases so un-updated clients keep
 // working. Delete this file together with the legacy mounts in src/app.ts.
@@ -14,7 +14,7 @@ describe("legacy /auth and /admin aliases", () => {
     expect(reg.status).toBe(201);
     expect(reg.headers["deprecation"]).toBe("true");
 
-    const li = await api.post("/auth/email/login").send({ email, password: PASSWORD, clientId: "patient-portal" });
+    const li = await completeLogin({ email, password: PASSWORD, clientId: "patient-portal" }, "/auth");
     expect(li.status).toBe(200);
     const setCookie = (li.headers["set-cookie"] as unknown as string[]).find((c) => c.startsWith("refresh_token="));
     expect(setCookie).toContain("Path=/auth;");
@@ -24,9 +24,7 @@ describe("legacy /auth and /admin aliases", () => {
     const email = uniqueEmail("v1");
     await register({ email, password: PASSWORD, clientId: "patient-portal" });
 
-    const li = await api
-      .post("/api/v1/auth/email/login")
-      .send({ email, password: PASSWORD, clientId: "patient-portal" });
+    const li = await completeLogin({ email, password: PASSWORD, clientId: "patient-portal" });
     expect(li.status).toBe(200);
     expect(li.headers["deprecation"]).toBeUndefined();
     const setCookie = (li.headers["set-cookie"] as unknown as string[]).find((c) => c.startsWith("refresh_token="));

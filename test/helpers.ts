@@ -1,6 +1,7 @@
 import supertest from "supertest";
 import { app } from "../src/app";
 import { prisma } from "../src/lib/prisma";
+import { hashOtp } from "../src/lib/otp";
 
 export const api = supertest(app);
 
@@ -23,9 +24,32 @@ export async function register(body: Record<string, unknown>) {
   return { status: res.status, body: res.body };
 }
 
-/** Log in through a portal. Returns status, body and any Set-Cookie header. */
+// The raw login code only ever exists in the emitted event (the DB keeps its
+// hash). Tests that just need to get logged in overwrite the challenge's hash
+// with this known code instead of capturing the event.
+export const TEST_OTP = "246810";
+
+export async function setChallengeCode(challengeId: string, otp = TEST_OTP) {
+  await prisma.loginChallenge.update({ where: { id: challengeId }, data: { codeHash: hashOtp(otp) } });
+}
+
+/**
+ * Full email/password login: password step, then (when a code is asked for)
+ * the OTP step with a known code. Returns the final supertest response, or the
+ * password step's response if that one failed.
+ */
+export async function completeLogin(body: Record<string, unknown>, prefix = "/api/v1/auth") {
+  const step1 = await api.post(`${prefix}/email/login`).send(body);
+  if (step1.status !== 202) return step1;
+  await setChallengeCode(step1.body.challengeId);
+  return api
+    .post(`${prefix}/email/login/verify`)
+    .send({ challengeId: step1.body.challengeId, otp: TEST_OTP, clientId: body.clientId });
+}
+
+/** Log in through a portal (both steps). Returns status, body and any Set-Cookie header. */
 export async function login(body: Record<string, unknown>) {
-  const res = await api.post("/api/v1/auth/email/login").send(body);
+  const res = await completeLogin(body);
   return { status: res.status, body: res.body, cookies: cookieHeader(res) };
 }
 
