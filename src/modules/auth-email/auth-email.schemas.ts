@@ -15,6 +15,18 @@ export const loginSchema = z.object({
   clientId: z.string().min(1, "clientId (portal) is required."),
 });
 
+// Second step of email/password login.
+export const loginVerifySchema = z.object({
+  challengeId: z.string().uuid("Invalid challengeId."),
+  otp: z.string().regex(/^\d{6}$/, "Code must be 6 digits."),
+  clientId: z.string().min(1, "clientId (portal) is required."),
+});
+
+export const loginResendSchema = z.object({
+  challengeId: z.string().uuid("Invalid challengeId."),
+  clientId: z.string().min(1, "clientId (portal) is required."),
+});
+
 // /api/v1/auth/token/refresh and /api/v1/auth/logout: native clients pass the refresh
 // token here; web clients send it as a cookie and omit the body.
 export const refreshSchema = z.object({

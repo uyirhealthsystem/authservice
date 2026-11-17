@@ -11,3 +11,15 @@ export const authAttemptLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: { code: "RATE_LIMITED", message: "Too many attempts, try again later." } },
 });
+
+// Same limits, separate counter, for /email/login/verify and /resend - so a
+// login (now two requests) doesn't eat twice the budget, and code guessing
+// can't borrow from the register/login allowance. The per-challenge attempt
+// cap in login-otp.service.ts is the main guard; this is the per-IP backstop.
+export const otpAttemptLimiter = rateLimit({
+  windowMs: env.authRateLimit.windowMs,
+  limit: env.authRateLimit.max,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: { code: "RATE_LIMITED", message: "Too many attempts, try again later." } },
+});

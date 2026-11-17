@@ -2,6 +2,7 @@ import { prisma } from "../../lib/prisma";
 import { verifyGoogleIdToken, exchangeGoogleCode } from "../../lib/googleOAuth";
 import { getPortal, resolveRegistrationRole, portalServesRole, PortalConfig } from "../../lib/portals";
 import { startSession } from "../auth-shared/session.service";
+import { notifyLogin } from "../auth-shared/login-notification";
 import { Errors } from "../../lib/errors";
 import { logger } from "../../lib/logger";
 
@@ -58,7 +59,7 @@ async function findOrCreateGoogleUser(
 // Shared tail of every Google login path (redirect + native): the same
 // status / role checks as email login, then a session.
 async function finishGoogleLogin(
-  user: { id: string; status: string; role: string },
+  user: { id: string; email: string | null; status: string; role: string },
   portal: PortalConfig,
   meta: { userAgent?: string; ip?: string },
 ) {
@@ -81,6 +82,7 @@ async function finishGoogleLogin(
   });
 
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+  notifyLogin(user, portal, "GOOGLE", meta);
 
   return { ...session, role: user.role, refreshTokenTtlDays: portal.refreshTokenTtlDays, portal };
 }

@@ -1,8 +1,11 @@
 import { prisma } from "../../lib/prisma";
 import { hashPassword, verifyPassword } from "../../lib/password";
 import { Errors } from "../../lib/errors";
-import { getPortal, resolveRegistrationRole, portalServesRole } from "../../lib/portals";
+import { getPortal, resolveRegistrationRole, portalServesRole, type PortalConfig } from "../../lib/portals";
+import { env } from "../../lib/env";
 import { startSession } from "../auth-shared/session.service";
+import { notifyLogin } from "../auth-shared/login-notification";
+import { startLoginChallenge } from "./login-otp.service";
 
 export async function registerWithEmail(
   email: string,
@@ -56,12 +59,54 @@ export async function registerWithEmail(
   return user;
 }
 
-export async function loginWithEmail(
-  email: string,
-  password: string,
-  clientId: string,
-  meta: { userAgent?: string; ip?: string },
+export type LoginMeta = { userAgent?: string; ip?: string };
+
+// Status + portal-role gate shared by both login steps (the OTP step re-runs
+// it, since the account can change between the two).
+export function assertCanLogin(user: { status: string; role: string }, portal: PortalConfig): void {
+  if (user.status === "PENDING") throw Errors.pendingApproval();
+  if (user.status !== "ACTIVE") throw Errors.accountDisabled();
+  // The account's stored role must be one this portal serves - so a PATIENT
+  // account presenting perfectly correct credentials at service-provider-app
+  // still gets rejected here, and vice versa.
+  if (!portalServesRole(portal, user.role)) {
+    throw Errors.forbidden(`This account's role (${user.role}) is not valid on this portal.`);
+  }
+}
+
+// Final step of an email/password login: session + tokens, lastLoginAt, and
+// the "new sign-in" alert.
+export async function issueLoginSession(
+  user: { id: string; email: string | null; role: string },
+  portal: PortalConfig,
+  meta: LoginMeta,
 ) {
+  const session = await startSession({
+    userId: user.id,
+    role: user.role,
+    portalId: portal.clientId,
+    audience: portal.clientId,
+    accessTokenTtlMin: portal.accessTokenTtlMin,
+    refreshTokenTtlDays: portal.refreshTokenTtlDays,
+    userAgent: meta.userAgent,
+    ip: meta.ip,
+  });
+
+  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+  notifyLogin(user, portal, "PASSWORD", meta);
+
+  return {
+    ...session,
+    role: user.role,
+    refreshTokenTtlDays: portal.refreshTokenTtlDays,
+    portal,
+  };
+}
+
+// Step 1 of email/password login. With login OTP on (the default) a correct
+// password only starts a challenge - the code is emailed and the tokens come
+// from POST /email/login/verify. LOGIN_OTP_ENABLED=false issues tokens here.
+export async function loginWithEmail(email: string, password: string, clientId: string, meta: LoginMeta) {
   const portal = getPortal(clientId);
 
   const identity = await prisma.identity.findUnique({
@@ -73,33 +118,13 @@ export async function loginWithEmail(
     throw Errors.invalidCredentials();
   }
 
-  if (identity.user.status === "PENDING") throw Errors.pendingApproval();
-  if (identity.user.status !== "ACTIVE") throw Errors.accountDisabled();
+  assertCanLogin(identity.user, portal);
 
-  // The account's stored role must be one this portal serves - so a PATIENT
-  // account presenting perfectly correct credentials at service-provider-app
-  // still gets rejected here, and vice versa.
-  if (!portalServesRole(portal, identity.user.role)) {
-    throw Errors.forbidden(`This account's role (${identity.user.role}) is not valid on this portal.`);
+  if (env.loginOtp.enabled) {
+    // A PASSWORD identity's providerUserId is the email, so there is always
+    // an address to send the code to.
+    const user = { id: identity.user.id, email: identity.user.email ?? email };
+    return { kind: "otp" as const, challenge: await startLoginChallenge(user, portal, meta) };
   }
-
-  const session = await startSession({
-    userId: identity.user.id,
-    role: identity.user.role,
-    portalId: clientId,
-    audience: clientId,
-    accessTokenTtlMin: portal.accessTokenTtlMin,
-    refreshTokenTtlDays: portal.refreshTokenTtlDays,
-    userAgent: meta.userAgent,
-    ip: meta.ip,
-  });
-
-  await prisma.user.update({ where: { id: identity.user.id }, data: { lastLoginAt: new Date() } });
-
-  return {
-    ...session,
-    role: identity.user.role,
-    refreshTokenTtlDays: portal.refreshTokenTtlDays,
-    portal,
-  };
+  return { kind: "session" as const, ...(await issueLoginSession(identity.user, portal, meta)) };
 }

@@ -141,12 +141,88 @@ resources) are entirely your service's call — authservice only vouches for
 - `400 ROLE_REQUIRED` — `service-provider-app` with no `role` in the body.
 - `400 ROLE_NOT_ALLOWED` — `role` is not one this portal offers.
 
+### Email/password login is two steps (email OTP)
+
+On **every portal** (patient-app, patient-portal, service-provider-app,
+admin-portal, superadmin-portal) a correct password no longer returns tokens.
+It emails a 6-digit code, and the tokens come from the verify step:
+
+```
+POST /email/login         email + password + clientId -> 202 { otpRequired, challengeId, ... }   (code emailed)
+POST /email/login/verify  challengeId + otp + clientId -> 200 { accessToken, role, [refreshToken] }
+POST /email/login/resend  challengeId + clientId       -> 202 (new code emailed, old one stops working)
+```
+
+Client logic: after `POST /email/login`, **branch on the response** —
+`202` with `otpRequired: true` → show the code screen; `200` with
+`accessToken` → logged in (this happens only when the server runs with
+`LOGIN_OTP_ENABLED=false`). Supporting both lets an app ship before the switch is flipped.
+
+**Google login does not ask for a code** — Google has already proven the
+user owns the address.
+
+Limits (env-configurable, defaults shown): code valid **5 min**; **5** wrong
+guesses per sign-in, then it's locked (log in again); resend after **30 s**;
+**4** codes per sign-in; **10** codes per account per **15 min**. Codes are
+stored hashed, single-use, and bound to the portal they were requested on.
+
 ### `POST /api/v1/auth/email/login`
 ```json
 { "email": "meera@example.com", "password": "...", "clientId": "service-provider-app" }
 ```
 No `role` on login — the account already has one. It comes back in the
 access token (`role` claim) **and** as `role` in the response body.
+
+Correct password (and an ACTIVE account allowed on this portal) →
+```json
+202 {
+  "otpRequired": true,
+  "challengeId": "5b0c…-uuid",
+  "email": "me***@example.com",
+  "codeLength": 6,
+  "expiresAt": "2026-11-17T09:35:00.000Z",
+  "resendAvailableAt": "2026-11-17T09:30:30.000Z"
+}
+```
+No tokens, no cookie. Wrong password / pending / disabled / wrong portal fail
+here exactly as before — no code is sent for them.
+
+Extra errors: `429 LOGIN_CODE_LIMIT` (too many codes for this account
+recently), `503 SERVICE_UNAVAILABLE` (the code couldn't be sent — try again).
+
+### `POST /api/v1/auth/email/login/verify`
+```json
+{ "challengeId": "5b0c…-uuid", "otp": "482913", "clientId": "service-provider-app" }
+```
+Success is what login used to return (below): `200 { accessToken, role }`
+plus the refresh token — in the body for native apps, as a cookie for web.
+
+Every successful login (this one and Google) emits a `UserLoggedIn` event on
+`auth.events`; notification-service emails the user a "new sign-in" alert
+(time, app, method, device, IP). It does not delay or block the login.
+
+Errors:
+- `400 INVALID_LOGIN_CODE` — wrong code; the message says how many attempts
+  are left. After 5 wrong codes the sign-in is locked: back to the password step.
+- `400 LOGIN_CHALLENGE_INVALID` — expired, already used, unknown, or started
+  on a different portal: back to the password step.
+- `403 ACCOUNT_DISABLED` / `PENDING_APPROVAL` / `FORBIDDEN` — the account
+  changed between the two steps.
+- `429 RATE_LIMITED` — 20 requests / 15 min per IP (separate counter from login).
+
+### `POST /api/v1/auth/email/login/resend`
+```json
+{ "challengeId": "5b0c…-uuid", "clientId": "service-provider-app" }
+```
+`202` with the same body as the login step (new `expiresAt` /
+`resendAvailableAt`). The previous code stops working. Allowed until 30 min
+after the password step.
+
+Errors: `429 LOGIN_CODE_RESEND_TOO_SOON` (before `resendAvailableAt`),
+`429 LOGIN_CODE_RESEND_LIMIT` (4 codes for this sign-in — log in again),
+`429 LOGIN_CODE_LIMIT`, `400 LOGIN_CHALLENGE_INVALID`, `503 SERVICE_UNAVAILABLE`.
+
+### Login response (after verify, or with `LOGIN_OTP_ENABLED=false`)
 
 The refresh token delivery depends on the portal's client type:
 - **native** (`patient-app`, `service-provider-app`):
@@ -346,11 +422,3 @@ Flips a `PENDING` account to `ACTIVE` and stamps `approvedAt` / `approvedById`.
 Flips a `PENDING` account to `DISABLED`. Same errors as `approve`.
 - `200 { "user": <user> }`
 
----
-
-## Patient — profile & family members
-
-Moved to **userservice** (`../userservice`) — patient profile, family
-members and medical records live there now, under `/api/v1/users/me/...`.
-Through the gateway the old `/api/v1/auth/patients/me/*` paths are
-rewritten onto userservice (deprecated); authservice no longer serves them.

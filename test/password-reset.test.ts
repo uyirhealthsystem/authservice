@@ -9,6 +9,8 @@ import { hashOtp } from "../src/lib/otp";
 vi.mock("../src/lib/events", () => ({
   AUTH_EVENTS_TOPIC: "auth.events",
   emitPasswordResetRequested: vi.fn(async () => {}),
+  emitUserLoggedIn: vi.fn(async () => {}),
+  emitLoginOtpRequested: vi.fn(async () => true),
 }));
 import { emitPasswordResetRequested } from "../src/lib/events";
 const mockEmit = vi.mocked(emitPasswordResetRequested);

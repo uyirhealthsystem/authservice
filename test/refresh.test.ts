@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { api, register, login, resetDb, uniqueEmail, PASSWORD, readSetCookie } from "./helpers";
+import { api, register, login, resetDb, uniqueEmail, PASSWORD, readSetCookie, completeLogin } from "./helpers";
 
 // Refresh-token rotation + reuse detection is the core security-sensitive
 // operation in the service (see session.service.ts). Test both transports.
@@ -82,7 +82,7 @@ describe("POST /api/v1/auth/token/refresh - web (cookie) transport", () => {
   it("rotates via the httpOnly cookie and detects reuse of the old cookie", async () => {
     const email = uniqueEmail("web");
     await register({ email, password: PASSWORD, clientId: "patient-portal" });
-    const li = await api.post("/api/v1/auth/email/login").send({ email, password: PASSWORD, clientId: "patient-portal" });
+    const li = await completeLogin({ email, password: PASSWORD, clientId: "patient-portal" });
     const first = readSetCookie(li, "refresh_token")!;
     expect(first).toBeTruthy();
 
