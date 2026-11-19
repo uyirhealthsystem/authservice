@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "authservice - Seed test accounts",
-    "description": "Run this folder in the Collection Runner (or `postman collection run <file> -i \"Seed test accounts (one-click)\"`)\nto create and approve one account per role. Every account uses the password in `{{seedPassword}}`.\n\n| Role | Email | clientId |\n|---|---|---|\n| SUPER_ADMIN | superadmin@uyir.test | superadmin-portal |\n| ADMIN | admin@uyir.test | admin-portal |\n| PATIENT | patient@uyir.test | patient-app |\n| DOCTOR | doctor@uyir.test | service-provider-app |\n| HOSPITAL | hospital@uyir.test | service-provider-app |\n| LS | ls@uyir.test | service-provider-app |\n| AMBULANCE_DRIVER | ambulance-driver@uyir.test | service-provider-app |\n| PRO | pro@uyir.test | service-provider-app |\n| LSC | lsc@uyir.test | service-provider-app |\n| ECG | ecg@uyir.test | service-provider-app |\n| HP | hp@uyir.test | service-provider-app |\n| HBC | hbc@uyir.test | service-provider-app |\n\nSafe to re-run: existing accounts return 409 (counted as OK) and only PENDING `@uyir.test` accounts get approved.\nApproving is done by the Super Admin, so nobody else's pending account is touched.\n\nThe run makes 13 calls to the auth rate limiter (12 registers + 1 login). The default limit is\n20 per 15 minutes per IP, so a second run straight after the first will get 429s - wait, or\nstart the server with a higher `AUTH_RATE_LIMIT_MAX`.",
+    "description": "Run this folder in the Collection Runner (or `postman collection run <file> -i \"Seed test accounts (one-click)\"`)\nto create and approve one account per role. Every account uses the password in `{{seedPassword}}`.\n\n| Role | Email | clientId |\n|---|---|---|\n| SUPER_ADMIN | superadmin@uyir.test | superadmin-portal |\n| ADMIN | admin@uyir.test | admin-portal |\n| PATIENT | patient@uyir.test | patient-app |\n| DOCTOR | doctor@uyir.test | service-provider-app |\n| HOSPITAL | hospital@uyir.test | service-provider-app |\n| LS | ls@uyir.test | service-provider-app |\n| AMBULANCE_DRIVER | ambulance-driver@uyir.test | service-provider-app |\n| PRO | pro@uyir.test | service-provider-app |\n| LSC | lsc@uyir.test | service-provider-app |\n| ECG | ecg@uyir.test | service-provider-app |\n| HP | hp@uyir.test | service-provider-app |\n| HBC | hbc@uyir.test | service-provider-app |\n| TCS | tcs@uyir.test | service-provider-app |\n\nSafe to re-run: existing accounts return 409 (counted as OK) and only PENDING `@uyir.test` accounts get approved.\nApproving is done by the Super Admin, so nobody else's pending account is touched.\n\nThe run makes 14 calls to the auth rate limiter (13 registers + 1 login). The default limit is\n20 per 15 minutes per IP, so a second run straight after the first will get 429s - wait, or\nstart the server with a higher `AUTH_RATE_LIMIT_MAX`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -535,6 +535,49 @@
         "body": {
           "mode": "raw",
           "raw": "{\n  \"email\": \"hbc@uyir.test\",\n  \"password\": \"{{seedPassword}}\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"HBC\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/email/register",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "email",
+            "register"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Register TCS",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "// 201 = created now, 409 = already exists from an earlier run. Both are fine.",
+              "pm.test(\"account exists (201 created or 409 already registered)\", () => {",
+              "  pm.expect(pm.response.code).to.be.oneOf([201, 409]);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"tcs@uyir.test\",\n  \"password\": \"{{seedPassword}}\",\n  \"clientId\": \"service-provider-app\",\n  \"role\": \"TCS\"\n}"
         },
         "url": {
           "raw": "{{baseUrl}}/api/v1/auth/email/register",
