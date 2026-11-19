@@ -52,6 +52,26 @@
     {
       "key": "loginOtp",
       "value": ""
+    },
+    {
+      "key": "role",
+      "value": "DOCTOR"
+    },
+    {
+      "key": "resetOtp",
+      "value": ""
+    },
+    {
+      "key": "adminEmail",
+      "value": "admin@uyir.test"
+    },
+    {
+      "key": "adminPassword",
+      "value": ""
+    },
+    {
+      "key": "adminClientId",
+      "value": "admin-portal"
     }
   ],
   "event": [
@@ -160,7 +180,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"clientId\": \"{{clientId}}\",\n  \"role\": \"DOCTOR\"\n}"
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"clientId\": \"{{clientId}}\",\n  \"role\": \"{{role}}\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/auth/email/register",
@@ -175,7 +195,7 @@
                 "register"
               ]
             },
-            "description": "Body: `email`, `password` (≥ 8 chars), `clientId` (portal). `role` is **only** used by multi-role portals (`service-provider-app`) and must be one of DOCTOR / HOSPITAL / LS / AMBULANCE_DRIVER / PRO — single-role portals ignore it, so drop the line for `patient-app`.\n\n`201 { id, email, role, status, pendingApproval }`. `pendingApproval: true` (status `PENDING`) means an ADMIN / SUPER_ADMIN must approve before login works.\n\nErrors: `VALIDATION_ERROR` (400), `UNKNOWN_PORTAL` (400), `ROLE_REQUIRED` / `ROLE_NOT_ALLOWED` (400), `CONFLICT_EMAIL_TAKEN` (409)."
+            "description": "Body: `email`, `password` (≥ 8 chars), `clientId` (portal). `role` is **only** used by multi-role portals (`service-provider-app`) and must be one of DOCTOR / HOSPITAL / LS / AMBULANCE_DRIVER / PRO / LSC / ECG / HP / HBC / TCS (set `{{role}}`) — single-role portals ignore it, so drop the line for `patient-app`.\n\n`201 { id, email, role, status, pendingApproval }`. `pendingApproval: true` (status `PENDING`) means an ADMIN / SUPER_ADMIN must approve before login works.\n\nErrors: `VALIDATION_ERROR` (400), `UNKNOWN_PORTAL` (400), `ROLE_REQUIRED` / `ROLE_NOT_ALLOWED` (400), `CONFLICT_EMAIL_TAKEN` (409)."
           },
           "response": []
         },
@@ -230,12 +250,12 @@
                 "login"
               ]
             },
-            "description": "`200 { accessToken, role }` — plus `refreshToken` in the body for native portals; web portals instead get a `Set-Cookie` httpOnly refresh cookie.\n\nErrors: `INVALID_CREDENTIALS` (401), `PENDING_APPROVAL` (403), `ACCOUNT_DISABLED` (403), `FORBIDDEN` (403, account role not served by this portal), `RATE_LIMITED` (429)."
+            "description": "Step 1 of email/password login. A correct password returns **`202`** and emails a 6-digit sign-in code:\n\n`202 { otpRequired: true, challengeId, email (masked), codeLength, expiresAt, resendAvailableAt }`\n\nThe test script saves `challengeId` to `{{loginChallengeId}}`. Put the emailed code in `{{loginOtp}}` and send **↳ Verify login code**.\n\nOnly when the server runs with `LOGIN_OTP_ENABLED=false` does this step return the tokens directly: `200 { accessToken, role }` (+ `refreshToken` in the body for native portals; web portals get an httpOnly refresh cookie).\n\nErrors: `INVALID_CREDENTIALS` (401), `PENDING_APPROVAL` (403), `ACCOUNT_DISABLED` (403), `FORBIDDEN` (403, account role not served by this portal), `RATE_LIMITED` (429)."
           },
           "response": []
         },
         {
-          "name": "↳ Verify login code (Login - POST /api/v1/auth/email/login)",
+          "name": "↳ Verify login code - POST /api/v1/auth/email/login/verify",
           "event": [
             {
               "listen": "test",
@@ -265,7 +285,7 @@
               "raw": "{\n  \"challengeId\": \"{{loginChallengeId}}\",\n  \"otp\": \"{{loginOtp}}\",\n  \"clientId\": \"{{clientId}}\"\n}"
             },
             "url": "{{baseUrl}}/api/v1/auth/email/login/verify",
-            "description": "Second step of email/password login. `otp` is the 6-digit code emailed after the password step (set `{{loginOtp}}`). Returns the same `200 { accessToken, role }` (+ `refreshToken` for native apps / cookie for web) the login used to return.\n\nErrors: `INVALID_LOGIN_CODE` (400, wrong code - message says attempts left; locked after 5), `LOGIN_CHALLENGE_INVALID` (400, expired / used / other portal - log in again), `ACCOUNT_DISABLED` (403), `RATE_LIMITED` (429)."
+            "description": "Step 2 of email/password login. Body: `challengeId` (from the login step), `otp` (the 6-digit emailed code, `{{loginOtp}}`), `clientId`.\n\n`200 { accessToken, role }` (+ `refreshToken` in the body for native apps; web portals get the refresh cookie). The test script saves the tokens.\n\nErrors: `VALIDATION_ERROR` (400, otp not 6 digits / challengeId not a UUID), `INVALID_LOGIN_CODE` (400, wrong code - after too many attempts the message says to log in again), `LOGIN_CHALLENGE_INVALID` (400, expired, used or unknown challenge - start again from Login), `RATE_LIMITED` (429)."
           },
           "response": []
         },
@@ -328,7 +348,20 @@
             },
             "description": "Start setting or resetting a password - one flow for a Google-first user who wants their first password AND for a genuine 'forgot password'. Always `202` regardless of whether the email has an account (no enumeration). On a real hit, authservice mints a 10-min single-use 6-digit code and emits a `PasswordResetRequested` event to Kafka; `notification-service` sends the email. Copy the code from that email into the environment as `{{resetOtp}}` for the next request.\n\nErrors: `UNKNOWN_PORTAL` (400), `RATE_LIMITED` (429)."
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Always 202 - the response never reveals whether the email has an account.",
+                  "pm.test('status is 202', () => pm.response.to.have.status(202));",
+                  "pm.test('put the emailed code in {{resetOtp}}, then send Reset password', () => true);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Reset password - POST /api/v1/auth/password/reset",
@@ -357,9 +390,20 @@
                 "reset"
               ]
             },
-            "description": "Redeem the emailed code and set the new password. Creates the PASSWORD login for a Google-first account, or replaces the hash for a genuine reset. On success every existing session on the account is revoked (all devices must re-login) and other outstanding codes are invalidated.\n\n`204 No Content`. Errors: `INVALID_RESET_CODE` (400 - unknown email, or code wrong / used / expired), `RATE_LIMITED` (429)."
+            "description": "Body: `email`, `otp` (the 6-digit code from Forgot password - set `{{resetOtp}}`), `password` (≥ 8 chars, the NEW password).\n\nRedeem the emailed code and set the new password. Creates the PASSWORD login for a Google-first account, or replaces the hash for a genuine reset. On success every existing session on the account is revoked (all devices must re-login) and other outstanding codes are invalidated.\n\n`204 No Content`. Errors: `INVALID_RESET_CODE` (400 - unknown email, or code wrong / used / expired), `RATE_LIMITED` (429).\n\nErrors: `VALIDATION_ERROR` (400), `INVALID_RESET_CODE` (400, wrong, used or expired code - codes last 10 minutes)."
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Refresh token - POST /api/v1/auth/token/refresh",
@@ -479,7 +523,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/v1/auth/google/start?clientId={{clientId}}&redirectUri={{googleRedirectUri}}&role=DOCTOR",
+              "raw": "{{baseUrl}}/api/v1/auth/google/start?clientId={{clientId}}&redirectUri={{googleRedirectUri}}&role={{role}}",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -502,7 +546,7 @@
                 },
                 {
                   "key": "role",
-                  "value": "DOCTOR",
+                  "value": "{{role}}",
                   "description": "Only for a multi-role WEB portal; omit otherwise."
                 }
               ]
@@ -568,7 +612,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"idToken\": \"<google-id-token>\",\n  \"clientId\": \"{{clientId}}\",\n  \"role\": \"DOCTOR\"\n}"
+              "raw": "{\n  \"idToken\": \"<google-id-token>\",\n  \"clientId\": \"{{clientId}}\",\n  \"role\": \"{{role}}\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/auth/google/native",
@@ -591,7 +635,7 @@
     },
     {
       "name": "Admin",
-      "description": "Back-office user approval. Every route needs a valid **ADMIN** or **SUPER_ADMIN** access token (`403 FORBIDDEN` otherwise). Newer endpoints — responses wrap under the resource name (§6.1 / §6.2).",
+      "description": "ADMIN / SUPER_ADMIN only. Run **Admin login** then **↳ Verify admin login code** first - they store `{{adminAccessToken}}`, which every request in this folder sends as `Authorization: Bearer`.\n\nSet `{{adminEmail}}` / `{{adminPassword}}` (the seed collection creates `admin@uyir.test`).",
       "auth": {
         "type": "bearer",
         "bearer": [
@@ -603,6 +647,82 @@
         ]
       },
       "item": [
+        {
+          "name": "Admin login - POST /api/v1/auth/email/login (admin-portal)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 202) {",
+                  "  const ch = pm.response.json();",
+                  "  pm.collectionVariables.set('loginChallengeId', ch.challengeId);",
+                  "  pm.test('sign-in code emailed to ' + ch.email + ' - set {{loginOtp}} and run Verify admin login code', () => pm.expect(ch.otpRequired).to.eql(true));",
+                  "  return;",
+                  "}",
+                  "// LOGIN_OTP_ENABLED=false: tokens come back straight away.",
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('adminAccessToken', pm.response.json().accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\",\n  \"clientId\": \"{{adminClientId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/email/login",
+            "description": "Email/password login on the admin portal. `202` + emailed code (saved challenge in `{{loginChallengeId}}`) - put the code in `{{loginOtp}}` and send the next request.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "↳ Verify admin login code - POST /api/v1/auth/email/login/verify",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "if (body.accessToken) pm.collectionVariables.set('adminAccessToken', body.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"challengeId\": \"{{loginChallengeId}}\",\n  \"otp\": \"{{loginOtp}}\",\n  \"clientId\": \"{{adminClientId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/email/login/verify",
+            "description": "Second step of the admin login. Stores the access token in `{{adminAccessToken}}` for the rest of this folder.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
         {
           "name": "List pending users - GET /api/v1/auth/users?status=PENDING",
           "request": {
@@ -626,9 +746,24 @@
                 }
               ]
             },
-            "description": "Users with `status: PENDING` that the caller may act on (an ADMIN sees provider accounts; a SUPER_ADMIN also sees pending ADMINs). `200 { users: [ … ] }`."
+            "description": "Users with `status: PENDING` that the caller may act on (an ADMIN sees provider accounts; a SUPER_ADMIN also sees pending ADMINs). `200 { users: [ … ] }`.\n\n`status=PENDING` is required (`VALIDATION_ERROR` otherwise). Fills `{{userId}}` with the first pending account if it is empty."
           },
-          "response": []
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "const users = pm.response.json().users || [];",
+                  "// Approve / Reject act on {{userId}} - default it to the first pending account.",
+                  "if (users.length && !pm.collectionVariables.get('userId')) pm.collectionVariables.set('userId', users[0].id);",
+                  "console.log(`${users.length} pending user(s)`);"
+                ]
+              }
+            }
+          ]
         },
         {
           "name": "Approve user - POST /api/v1/auth/users/:userId/approve",
@@ -687,6 +822,16 @@
               ]
             },
             "description": "State-transition action (§2.3). Rejects a pending signup. `200 { user: { … } }`. Same error set as approve."
+          },
+          "response": []
+        },
+        {
+          "name": "(Legacy) List pending users - GET /admin/users/pending",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/admin/users/pending",
+            "description": "Deprecated alias of `GET /api/v1/auth/users?status=PENDING` (responds with a `Deprecation: true` header). Kept for old clients - use the `/api/v1/auth` route instead."
           },
           "response": []
         }
@@ -798,6 +943,99 @@
                 }
               ]
             }
+          },
+          "response": []
+        },
+        {
+          "name": "Register on service-provider-app without role -> 400 ROLE_REQUIRED",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('error code is ROLE_REQUIRED', () => pm.expect(pm.response.json().error.code).to.eql('ROLE_REQUIRED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"no-role@example.com\",\n  \"password\": \"password123\",\n  \"clientId\": \"service-provider-app\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/email/register",
+            "description": "The multi-role portal needs `role` to know which kind of provider to create. Nothing is created."
+          },
+          "response": []
+        },
+        {
+          "name": "Verify login code with an unknown challenge -> 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('challenge rejected', () => pm.expect(pm.response.json().error.code).to.be.oneOf(['LOGIN_CHALLENGE_INVALID', 'INVALID_LOGIN_CODE']));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"challengeId\": \"00000000-0000-4000-8000-000000000000\",\n  \"otp\": \"123456\",\n  \"clientId\": \"{{clientId}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/email/login/verify",
+            "description": "A well-formed but unknown `challengeId` is rejected - the code can only be redeemed against the challenge the password step created."
+          },
+          "response": []
+        },
+        {
+          "name": "Reset password with a wrong code -> 400 INVALID_RESET_CODE",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('error code is INVALID_RESET_CODE', () => pm.expect(pm.response.json().error.code).to.eql('INVALID_RESET_CODE'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"nobody@example.com\",\n  \"otp\": \"000000\",\n  \"password\": \"password123\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/password/reset",
+            "description": "Wrong, used or expired code. Same answer whether or not the email has an account."
           },
           "response": []
         }
